@@ -56,3 +56,15 @@ splits, balance = viz.generate_splits(
 )
 print(balance)
 ```
+
+### Accessing results
+
+Each stage stores its output tables and figures in an `AnalysisContext` instance.
+For example:
+
+```python
+ctx = Pipeline().run(viz)
+ctx.get_table("quality.unique_ratio")          # unique-value ratios
+ctx.get_table("quality.categorical_quality")   # categorical singleton stats
+ctx.get_table("target.class_balance")          # distribution of target classes
+```
