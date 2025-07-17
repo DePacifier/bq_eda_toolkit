@@ -43,6 +43,11 @@ class ProfilingStage(BaseStage):
         fig.update_layout(margin=dict(l=0, r=0, t=40, b=0))
         ctx.add_figure(self.key("non_null_pct_bar"), fig)
 
+        # Sample bias check
+        sample_n = int(ctx.params.get("sample_rows", 1000))
+        bias_df = viz.evaluate_sample_bias(sample_rows=sample_n)
+        ctx.add_table(self.key("sample_bias"), bias_df)
+
 
 # ────────────────────────────────────────────────
 # 2. Data-Quality Stage
@@ -68,6 +73,50 @@ class QualityStage(BaseStage):
         if not dup.empty:
             dup["duplicate_rows"] = dup["total"] - dup["distinct_rows"]
             ctx.add_table(self.key("duplicate_summary"), dup)
+
+        # Unique value ratios
+        uniq_cols = ", ".join(
+            f"COUNT(DISTINCT {c}) AS uniq_{c}" for c in viz.columns
+        )
+        uniq_q = f"SELECT COUNT(*) AS total, {uniq_cols} FROM {viz.full_table_path}"
+        uniq = viz._execute_query(uniq_q)
+        if not uniq.empty:
+            total = int(uniq.at[0, 'total'])
+            rows = []
+            for c in viz.columns:
+                u = uniq.at[0, f'uniq_{c}']
+                ratio = u / total if total else 0
+                rows.append({
+                    'column': c,
+                    'unique_count': u,
+                    'unique_ratio': ratio * 100,
+                    'constant': u <= 1,
+                    'quasi_constant': ratio < 0.05 and u > 1,
+                })
+            uniq_df = pd.DataFrame(rows)
+            ctx.add_table(self.key("unique_ratio"), uniq_df)
+
+        # Categorical value counts
+        cat_summary = []
+        for col in viz.categorical_columns:
+            counts = viz._execute_query(
+                f"SELECT {col}, COUNT(*) as n FROM {viz.full_table_path} GROUP BY {col}"
+            )
+            if counts.empty:
+                continue
+            ctx.add_table(self.key(f"{col}.category_counts"), counts)
+            n_cats = len(counts)
+            n_single = int((counts['n'] == 1).sum())
+            ratio_single = n_single / n_cats if n_cats else 0
+            long_tail = n_cats > 50 or ratio_single > 0.5
+            cat_summary.append({
+                'column': col,
+                'categories': n_cats,
+                'singleton_pct': ratio_single * 100,
+                'long_tail': long_tail,
+            })
+        if cat_summary:
+            ctx.add_table(self.key("categorical_quality"), pd.DataFrame(cat_summary))
 
         # Outlier rate per numeric column (Tukey rule)
         out_rows = []
@@ -228,3 +277,12 @@ class TargetStage(BaseStage):
             mi = mutual_info_classif(X, y)
         mi_df = pd.DataFrame({"feature": X.columns, "MI": mi}).sort_values("MI", ascending=False)
         ctx.add_table(self.key("mutual_information"), mi_df)
+
+        # class distribution
+        cls_df = viz._execute_query(
+            f"SELECT {target} AS class, COUNT(*) as n FROM {viz.full_table_path} GROUP BY {target}"
+        )
+        if not cls_df.empty:
+            total = cls_df["n"].sum()
+            cls_df["pct"] = cls_df["n"] / total * 100
+            ctx.add_table(self.key("class_balance"), cls_df.sort_values("pct", ascending=False))

@@ -5,6 +5,8 @@ import plotly.express as px
 from google.cloud import bigquery
 from google.oauth2 import service_account
 import numpy as np
+from scipy.stats import ks_2samp, chi2_contingency
+from sklearn.model_selection import train_test_split
 
 class BigQueryVisualizer:
     """
@@ -1242,3 +1244,165 @@ class BigQueryVisualizer:
         
         print("✅ Analysis complete.")
         return summary_df.style.background_gradient(cmap='Reds', subset=['Null %'])
+
+    # ------------------------------------------------------------------
+    # Sampling & bias evaluation utilities
+    # ------------------------------------------------------------------
+    def fetch_sample(self, n: int, *, where: str | None = None) -> pd.DataFrame:
+        """Return a random sample of ``n`` rows from the table."""
+        query = (
+            f"SELECT * FROM {self.full_table_path} "
+            f"{self._build_where_clause(where)} ORDER BY RAND() LIMIT {n}"
+        )
+        return self._execute_query(query)
+
+    def evaluate_sample_bias(
+        self,
+        *,
+        sample_rows: int = 1000,
+        alpha: float = 0.05,
+    ) -> pd.DataFrame:
+        """Compare a random sample against the full table.
+
+        Numeric columns are tested with the Kolmogorov–Smirnov test and
+        categorical columns with a Chi-squared test. ``alpha`` controls the
+        significance threshold for the ``biased`` flag.
+        """
+
+        sample_df = self.fetch_sample(sample_rows)
+        results: list[dict] = []
+
+        # numeric columns – KS test
+        for col in self.numeric_columns:
+            ref = self.fetch_sample(sample_rows, where=f"{col} IS NOT NULL")[col]
+            if ref.empty or sample_df[col].dropna().empty:
+                continue
+            stat, pval = ks_2samp(sample_df[col].dropna(), ref.dropna())
+            results.append({
+                "column": col,
+                "test": "ks",
+                "statistic": stat,
+                "p_value": pval,
+                "biased": pval < alpha,
+            })
+
+        # categorical columns – Chi^2
+        for col in self.categorical_columns:
+            full_counts = self._execute_query(
+                f"SELECT {col}, COUNT(*) as n FROM {self.full_table_path} "
+                f"WHERE {col} IS NOT NULL GROUP BY {col}"
+            )
+            if full_counts.empty:
+                continue
+            sample_counts = sample_df[col].value_counts().rename("sample")
+            merged = full_counts.set_index(col)["n"].rename("population")
+            both = (
+                pd.concat([sample_counts, merged], axis=1)
+                .fillna(0)
+                .astype(int)
+            )
+            chi2, pval, _, _ = chi2_contingency(both.T.values)
+            results.append({
+                "column": col,
+                "test": "chi2",
+                "statistic": chi2,
+                "p_value": pval,
+                "biased": pval < alpha,
+            })
+
+        return pd.DataFrame(results)
+
+    def missingness_correlation(
+        self,
+        columns: list[str] | None = None,
+        sample_rows: int = 100_000,
+    ) -> pd.DataFrame:
+        """Return the correlation matrix of null indicators for ``columns``."""
+
+        cols = columns or self.columns
+        q = (
+            f"SELECT {', '.join(cols)} FROM {self.full_table_path} "
+            f"TABLESAMPLE SYSTEM (1 PERCENT) LIMIT {sample_rows}"
+        )
+        df = self._execute_query(q)
+        if df.empty:
+            return pd.DataFrame()
+        miss = df[cols].isna().astype(int)
+        return miss.corr()
+
+    def frequent_missing_patterns(
+        self,
+        columns: list[str] | None = None,
+        *,
+        top_n: int = 10,
+        sample_rows: int = 100_000,
+    ) -> pd.DataFrame:
+        """Identify the most common combinations of missing values."""
+
+        cols = columns or self.columns
+        q = (
+            f"SELECT {', '.join(cols)} FROM {self.full_table_path} "
+            f"TABLESAMPLE SYSTEM (1 PERCENT) LIMIT {sample_rows}"
+        )
+        df = self._execute_query(q)
+        if df.empty:
+            return pd.DataFrame()
+
+        mask = df[cols].isna()
+        combo = mask.apply(lambda r: '|'.join(r.index[r]), axis=1)
+        counts = combo.value_counts().reset_index()
+        counts.columns = ["missing_combination", "count"]
+        counts["pct"] = counts["count"] / len(combo) * 100
+        return counts.head(top_n)
+
+    def generate_splits(
+        self,
+        *,
+        target_column: str,
+        method: str = "random",
+        val_size: float = 0.2,
+        test_size: float = 0.1,
+        time_column: str | None = None,
+        random_state: int = 42,
+    ) -> tuple[dict[str, pd.DataFrame], pd.DataFrame]:
+        """Create train/validation/test splits and return class balance stats."""
+
+        df = self._execute_query(f"SELECT * FROM {self.full_table_path}")
+        if df.empty:
+            return {}, pd.DataFrame()
+
+        if method == "time" and time_column:
+            df = df.sort_values(time_column)
+            n = len(df)
+            test_n = int(n * test_size)
+            val_n = int(n * val_size)
+            test_df = df.iloc[-test_n:]
+            val_df = df.iloc[-test_n - val_n:-test_n]
+            train_df = df.iloc[: -test_n - val_n]
+        else:
+            strat = df[target_column] if method == "stratified" else None
+            train_df, temp_df = train_test_split(
+                df,
+                test_size=val_size + test_size,
+                stratify=strat,
+                random_state=random_state,
+            )
+            strat_temp = temp_df[target_column] if method == "stratified" else None
+            val_rel = val_size / (val_size + test_size)
+            val_df, test_df = train_test_split(
+                temp_df,
+                test_size=1 - val_rel,
+                stratify=strat_temp,
+                random_state=random_state,
+            )
+
+        splits = {"train": train_df, "validation": val_df, "test": test_df}
+
+        balance = {}
+        for name, frame in splits.items():
+            counts = frame[target_column].value_counts(normalize=True)
+            balance[name] = counts
+        balance_df = pd.DataFrame(balance).fillna(0) * 100
+        balance_df.index.name = target_column
+
+        return splits, balance_df
