@@ -1,0 +1,8 @@
+google-cloud-bigquery
+matplotlib
+pandas
+plotly
+seaborn
+statsmodels
+scikit-learn
+numpy
