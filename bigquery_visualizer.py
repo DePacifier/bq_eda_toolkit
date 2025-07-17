@@ -1355,6 +1355,63 @@ class BigQueryVisualizer:
         counts["pct"] = counts["count"] / len(combo) * 100
         return counts.head(top_n)
 
+    def missingness_map(
+        self,
+        columns: list[str] | None = None,
+        *,
+        sample_rows: int = 100_000,
+    ) -> tuple[pd.DataFrame, plt.Axes | None, pd.DataFrame]:
+        """Visualise missingness and run simple MCAR/MAR tests.
+
+        Returns a tuple of ``(mask_df, fig, mcar_results)`` where ``mask_df``
+        is the boolean missingness DataFrame, ``fig`` a seaborn heatmap, and
+        ``mcar_results`` contains per-column MCAR/MAR classifications based on
+        pairwise statistical tests against all other columns.
+        """
+
+        cols = columns or self.columns
+        q = (
+            f"SELECT {', '.join(cols)} FROM {self.full_table_path} "
+            f"TABLESAMPLE SYSTEM (1 PERCENT) LIMIT {sample_rows}"
+        )
+        df = self._execute_query(q)
+        if df.empty:
+            return pd.DataFrame(), None, pd.DataFrame()
+
+        mask = df[cols].isna()
+
+        # ---- 1. heatmap ----
+        sns.set_theme(style="white")
+        fig, ax = plt.subplots(figsize=(max(6, len(cols) * 0.5), 4))
+        sns.heatmap(mask.T, cbar=False, ax=ax)
+        ax.set_ylabel("column")
+        ax.set_xlabel("row")
+        ax.set_title("Missingness Map")
+
+        # ---- 2. simple MCAR/MAR tests ----
+        results = []
+        for col in cols:
+            m = mask[col]
+            pvals = []
+            for other in [c for c in cols if c != col]:
+                if other in self.numeric_columns:
+                    stat, p = ks_2samp(
+                        df.loc[m, other].dropna(),
+                        df.loc[~m, other].dropna(),
+                    )
+                    pvals.append(p)
+                else:
+                    ct = pd.crosstab(m, df[other])
+                    if ct.size <= 0:
+                        continue
+                    chi2, p, *_ = chi2_contingency(ct)
+                    pvals.append(p)
+            mcar = all(p > 0.05 for p in pvals) if pvals else True
+            results.append({"column": col, "MCAR": mcar})
+
+        res_df = pd.DataFrame(results)
+        return mask, ax, res_df
+
     def generate_splits(
         self,
         *,

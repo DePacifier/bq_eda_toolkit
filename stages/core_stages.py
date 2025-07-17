@@ -10,6 +10,7 @@ from bigquery_visualizer import BigQueryVisualizer
 from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 from sklearn.decomposition import PCA
+from sklearn.ensemble import IsolationForest
 
 
 # ────────────────────────────────────────────────
@@ -61,6 +62,13 @@ class QualityStage(BaseStage):
         if miss_tbl is not None:
             miss_tbl["missing_pct"] = 100 - miss_tbl["pct"]
             ctx.add_table(self.key("missing_pct"), miss_tbl)
+
+        # Missingness map & MCAR/MAR tests
+        mask_df, ax, mcar_df = viz.missingness_map()
+        if not mask_df.empty:
+            if ax is not None:
+                ctx.add_figure(self.key("missing_map"), ax.get_figure())
+            ctx.add_table(self.key("mcar_results"), mcar_df)
 
         # Duplicate row count (all columns)
         dup_q = f"""
@@ -118,23 +126,68 @@ class QualityStage(BaseStage):
         if cat_summary:
             ctx.add_table(self.key("categorical_quality"), pd.DataFrame(cat_summary))
 
-        # Outlier rate per numeric column (Tukey rule)
+        # Detect inconsistent categorical values (case/whitespace)
+        for col in viz.categorical_columns:
+            counts = ctx.get_table(self.key(f"{col}.category_counts"))
+            if counts is None or counts.empty:
+                continue
+            norm = counts[col].astype(str).str.strip().str.lower()
+            groups: dict[str, set] = {}
+            for orig, nval in zip(counts[col].astype(str), norm):
+                groups.setdefault(nval, set()).add(orig)
+            inconsist = {k: list(v) for k, v in groups.items() if len(v) > 1}
+            if inconsist:
+                df_inc = pd.DataFrame({
+                    "normalised": list(inconsist.keys()),
+                    "original_values": list(inconsist.values()),
+                })
+                ctx.add_table(self.key(f"{col}.inconsistent_groups"), df_inc)
+
+        # Outlier rate per numeric column (Tukey, Z-score) and IsolationForest
         out_rows = []
         for col in viz.numeric_columns:
             q = f"""
+              WITH stats AS (
+                SELECT
+                  APPROX_QUANTILES({col}, 4)[OFFSET(1)] AS q1,
+                  APPROX_QUANTILES({col}, 4)[OFFSET(3)] AS q3,
+                  AVG({col}) AS mean,
+                  STDDEV_POP({col}) AS sd
+                FROM {viz.full_table_path}
+              )
               SELECT
-                APPROX_QUANTILES({col}, 4)[OFFSET(1)] AS q1,
-                APPROX_QUANTILES({col}, 4)[OFFSET(3)] AS q3,
+                q1, q3, mean, sd,
                 COUNT(*) AS n,
-                COUNTIF({col} < q1 - 1.5*(q3-q1)
-                        OR {col} > q3 + 1.5*(q3-q1)) AS n_out
-              FROM {viz.full_table_path}
+                COUNTIF({col} < q1 - 1.5*(q3 - q1)
+                        OR {col} > q3 + 1.5*(q3 - q1)) AS n_out_iqr,
+                COUNTIF(ABS(({col} - mean)/NULLIF(sd,0)) > 3) AS n_out_z
+              FROM {viz.full_table_path}, stats
             """
             row = viz._execute_query(q).iloc[0]
-            out_rows.append({"column": col,
-                             "outlier_pct": row["n_out"] / row["n"] * 100})
-        out_df = pd.DataFrame(out_rows).sort_values("outlier_pct", ascending=False)
+            out_rows.append({
+                "column": col,
+                "iqr_outlier_pct": row["n_out_iqr"] / row["n"] * 100,
+                "zscore_outlier_pct": row["n_out_z"] / row["n"] * 100,
+            })
+        out_df = pd.DataFrame(out_rows).sort_values("iqr_outlier_pct", ascending=False)
         ctx.add_table(self.key("outlier_pct"), out_df)
+
+        # IsolationForest on numeric sample
+        sample_n = int(ctx.params.get("sample_rows", 10000))
+        if viz.numeric_columns:
+            sample_df = viz._execute_query(
+                f"SELECT {', '.join(viz.numeric_columns)} FROM {viz.full_table_path} TABLESAMPLE SYSTEM (1 PERCENT) LIMIT {sample_n}"
+            )
+            if not sample_df.empty:
+                iso = IsolationForest(contamination=0.01, random_state=42)
+                X = sample_df[viz.numeric_columns].dropna()
+                if not X.empty:
+                    flags = iso.fit_predict(X)
+                    pct = (flags == -1).mean() * 100
+                    ctx.add_table(
+                        self.key("outlier_flags"),
+                        pd.DataFrame({"method": ["IsolationForest"], "flagged_pct": [pct]}),
+                    )
 
 
 # ────────────────────────────────────────────────
