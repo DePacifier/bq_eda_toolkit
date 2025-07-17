@@ -1130,7 +1130,7 @@ class BigQueryVisualizer:
         df = self._execute_query(query)
         if df.empty or df.iloc[0]['total_rows'] is None:
             print("Could not analyze column.")
-            return{}
+            return {}
 
         stats = df.iloc[0].to_dict()
 
