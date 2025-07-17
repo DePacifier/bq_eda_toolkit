@@ -44,6 +44,11 @@ class ProfilingStage(BaseStage):
         fig.update_layout(margin=dict(l=0, r=0, t=40, b=0))
         ctx.add_figure(self.key("non_null_pct_bar"), fig)
 
+        # Sample bias check
+        sample_n = int(ctx.params.get("sample_rows", 1000))
+        bias_df = viz.evaluate_sample_bias(sample_rows=sample_n)
+        ctx.add_table(self.key("sample_bias"), bias_df)
+
 
 # ────────────────────────────────────────────────
 # 2. Data-Quality Stage

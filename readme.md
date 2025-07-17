@@ -28,3 +28,31 @@
 git clone https://github.com/DePacifier/bq_eda_toolkit.git
 cd bq_eda_toolkit
 pip install -r requirements.txt
+```
+
+## 🚀 Usage
+
+```python
+from bigquery_visualizer import BigQueryVisualizer
+from pipeline import Pipeline
+
+viz = BigQueryVisualizer(
+    project_id="my-project",
+    table_id="dataset.table",
+    credentials_path="path/to/key.json",
+)
+
+# run the default EDA pipeline
+Pipeline().run(viz)
+
+# check if a small sample is representative
+bias = viz.evaluate_sample_bias(sample_rows=1000)
+print(bias)
+
+# create stratified train/validation/test splits
+splits, balance = viz.generate_splits(
+    target_column="label",
+    method="stratified",
+)
+print(balance)
+```
