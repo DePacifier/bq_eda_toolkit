@@ -8,6 +8,7 @@ class DummyViz(BigQueryVisualizer):
     def __init__(self, df):
         self.full_table_path = 'x'
         self.columns = list(df.columns)
+        self.numeric_columns = []
         self._df = df
     def _execute_query(self, q, use_cache=True):
         return self._df.copy()
@@ -25,3 +26,7 @@ def test_missingness_functions():
 
     combos = viz.frequent_missing_patterns(top_n=2)
     assert len(combos) == 2
+
+    mask, fig, mcar = viz.missingness_map()
+    assert mask.shape == df.shape
+    assert not mcar.empty
