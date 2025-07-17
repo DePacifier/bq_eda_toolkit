@@ -1312,6 +1312,49 @@ class BigQueryVisualizer:
 
         return pd.DataFrame(results)
 
+    def missingness_correlation(
+        self,
+        columns: list[str] | None = None,
+        sample_rows: int = 100_000,
+    ) -> pd.DataFrame:
+        """Return the correlation matrix of null indicators for ``columns``."""
+
+        cols = columns or self.columns
+        q = (
+            f"SELECT {', '.join(cols)} FROM {self.full_table_path} "
+            f"TABLESAMPLE SYSTEM (1 PERCENT) LIMIT {sample_rows}"
+        )
+        df = self._execute_query(q)
+        if df.empty:
+            return pd.DataFrame()
+        miss = df[cols].isna().astype(int)
+        return miss.corr()
+
+    def frequent_missing_patterns(
+        self,
+        columns: list[str] | None = None,
+        *,
+        top_n: int = 10,
+        sample_rows: int = 100_000,
+    ) -> pd.DataFrame:
+        """Identify the most common combinations of missing values."""
+
+        cols = columns or self.columns
+        q = (
+            f"SELECT {', '.join(cols)} FROM {self.full_table_path} "
+            f"TABLESAMPLE SYSTEM (1 PERCENT) LIMIT {sample_rows}"
+        )
+        df = self._execute_query(q)
+        if df.empty:
+            return pd.DataFrame()
+
+        mask = df[cols].isna()
+        combo = mask.apply(lambda r: '|'.join(r.index[r]), axis=1)
+        counts = combo.value_counts().reset_index()
+        counts.columns = ["missing_combination", "count"]
+        counts["pct"] = counts["count"] / len(combo) * 100
+        return counts.head(top_n)
+
     def generate_splits(
         self,
         *,
