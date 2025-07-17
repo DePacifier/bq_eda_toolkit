@@ -25,7 +25,6 @@
 ## 📦 Installation
 
 ```bash
-git clone https://github.com/<you>/bigquery-eda.git
-cd bigquery-eda
+git clone https://github.com/DePacifier/bq_eda_toolkit.git
+cd bq_eda_toolkit
 pip install -r requirements.txt
-# or: pip install google-cloud-bigquery pandas plotly seaborn statsmodels scikit-learn
