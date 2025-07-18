@@ -1665,48 +1665,67 @@ class BigQueryVisualizer:
         test_size: float = 0.1,
         time_column: str | None = None,
         random_state: int = 42,
-    ) -> tuple[dict[str, pd.DataFrame], pd.DataFrame]:
-        """Create train/validation/test splits and return class balance stats."""
+    ) -> tuple[dict[str, str], pd.DataFrame]:
+        """Create train/validation/test splits in BigQuery and return balance."""
 
-        df = self._execute_query(f"SELECT * FROM {self.full_table_path}")
-        if df.empty:
-            return {}, pd.DataFrame()
+        dataset_id, table_name = self.table_id.split(".")
+        train_tbl = f"{dataset_id}.{table_name}_train"
+        val_tbl = f"{dataset_id}.{table_name}_val"
+        test_tbl = f"{dataset_id}.{table_name}_test"
 
-        if method == "time" and time_column:
-            df = df.sort_values(time_column)
-            n = len(df)
-            test_n = int(n * test_size)
-            val_n = int(n * val_size)
-            test_df = df.iloc[-test_n:]
-            val_df = df.iloc[-test_n - val_n:-test_n]
-            train_df = df.iloc[: -test_n - val_n]
-        else:
-            strat = df[target_column] if method == "stratified" else None
-            train_df, temp_df = train_test_split(
-                df,
-                test_size=val_size + test_size,
-                stratify=strat,
-                random_state=random_state,
-            )
-            strat_temp = temp_df[target_column] if method == "stratified" else None
-            val_rel = val_size / (val_size + test_size)
-            val_df, test_df = train_test_split(
-                temp_df,
-                test_size=1 - val_rel,
-                stratify=strat_temp,
-                random_state=random_state,
-            )
+        order_expr = (
+            time_column
+            if method == "time" and time_column
+            else "RAND()"
+        )
+        partition = f"PARTITION BY {target_column}" if method == "stratified" else ""
+        window = f"{partition} ORDER BY {order_expr}"
 
-        splits = {"train": train_df, "validation": val_df, "test": test_df}
+        base_sql = f"SELECT *, ROW_NUMBER() OVER ({window}) AS rn, "
+        base_sql += f"COUNT(*) OVER ({partition}) AS ct FROM {self.full_table_path}"
 
-        balance = {}
-        for name, frame in splits.items():
-            counts = frame[target_column].value_counts(normalize=True)
-            balance[name] = counts
-        balance_df = pd.DataFrame(balance).fillna(0) * 100
-        balance_df.index.name = target_column
+        create_train = f"""
+            CREATE OR REPLACE TABLE {train_tbl} AS
+            SELECT * EXCEPT(rn, ct) FROM ({base_sql})
+            WHERE rn <= ct * {1 - val_size - test_size}
+        """
+        create_val = f"""
+            CREATE OR REPLACE TABLE {val_tbl} AS
+            SELECT * EXCEPT(rn, ct) FROM ({base_sql})
+            WHERE rn > ct * {1 - val_size - test_size}
+              AND rn <= ct * {1 - test_size}
+        """
+        create_test = f"""
+            CREATE OR REPLACE TABLE {test_tbl} AS
+            SELECT * EXCEPT(rn, ct) FROM ({base_sql})
+            WHERE rn > ct * {1 - test_size}
+        """
 
-        return splits, balance_df
+        for q in (create_train, create_val, create_test):
+            self._execute_query(q, use_cache=False)
+
+        bal_q = f"""
+            SELECT 'train' AS split, {target_column} AS cls, COUNT(*) AS n
+              FROM {train_tbl} GROUP BY cls
+            UNION ALL
+            SELECT 'validation', {target_column}, COUNT(*)
+              FROM {val_tbl} GROUP BY {target_column}
+            UNION ALL
+            SELECT 'test', {target_column}, COUNT(*)
+              FROM {test_tbl} GROUP BY {target_column}
+        """
+
+        counts = self._execute_query(bal_q, use_cache=False)
+        if counts.empty:
+            return {"train": train_tbl, "validation": val_tbl, "test": test_tbl}, pd.DataFrame()
+
+        pivot = counts.pivot(index="cls", columns="split", values="n").fillna(0)
+        totals = pivot.sum()
+        pct = pivot.div(totals, axis=1) * 100
+        pct.index.name = target_column
+
+        splits = {"train": train_tbl, "validation": val_tbl, "test": test_tbl}
+        return splits, pct
 
     # ------------------------------------------------------------------
     #  Advanced analytics helpers
