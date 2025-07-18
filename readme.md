@@ -88,3 +88,30 @@ The `FeatureAdviceStage` consumes earlier statistics to auto‑generate
 encoding, imputation and scaling suggestions, plus a list of possible
 interaction terms. These tables can guide feature engineering for a
 machine learning model.
+
+## 🛠️ Configuration
+
+BigQuery credentials can be supplied either via the `credentials_path` argument or by setting the `GOOGLE_APPLICATION_CREDENTIALS` environment variable. The visualizer also exposes query guard parameters:
+
+- `max_bytes_scanned`: abort if a dry run would scan more than this many bytes (default `10_000_000_000`).
+- `max_result_bytes`: abort if `EXPLAIN` estimates the result exceeds this size (default `2_000_000_000`).
+- `cache_threshold_bytes`: only cache DataFrames below this threshold (default `100_000_000`).
+
+You may set these as environment variables in your workflow or pass them directly when instantiating `BigQueryVisualizer`.
+
+## 🔐 Credential management
+
+Store your service-account JSON key outside the repository. Point `credentials_path` or `GOOGLE_APPLICATION_CREDENTIALS` to the file via an environment variable or a secrets manager. To rotate credentials, create a new key in the GCP console, update the stored secret or variable to reference the new file and revoke the old key.
+
+## 🧪 Tests & contributing
+
+Install dependencies and run the test suite with `pytest`:
+
+```bash
+pip install -r requirements.txt
+pip install pytest
+pytest
+```
+
+Please ensure the tests pass before submitting a pull request. Contributions are welcome via GitHub PRs.
+
