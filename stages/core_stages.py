@@ -199,16 +199,22 @@ class UnivariateStage(BaseStage):
     def run(self, viz: BigQueryVisualizer, ctx: AnalysisContext):
         # Numeric descriptive stats (uses existing helper)
         num_df = viz.analyze_all_numeric()
-        ctx.add_table(self.key("numeric_stats"), num_df.data if num_df is not None else pd.DataFrame())
+        if hasattr(num_df, 'data'):
+            ctx.add_table(self.key("numeric_stats"), num_df.data)
+        else:
+            ctx.add_table(self.key("numeric_stats"), num_df if num_df is not None else pd.DataFrame())
 
         # Categorical descriptive stats (top-5 values)
         cat_df = viz.analyze_all_categorical(top_n_values=5)
-        ctx.add_table(self.key("categorical_stats"), cat_df.data if cat_df is not None else pd.DataFrame())
+        if hasattr(cat_df, 'data'):
+            ctx.add_table(self.key("categorical_stats"), cat_df.data)
+        else:
+            ctx.add_table(self.key("categorical_stats"), cat_df if cat_df is not None else pd.DataFrame())
 
-        # Example histogram for first numeric column
-        if viz.numeric_columns:
-            col = viz.numeric_columns[0]
-            _, fig = viz.plot_histogram(numeric_column=col, limit=50000, bins=30)
+        # Histograms with KDE overlay for each numeric column
+        for col in viz.numeric_columns:
+            _, fig = viz.plot_histogram(numeric_column=col, limit=50000,
+                                       bins=30, kde=True)
             ctx.add_figure(self.key(f"{col}.hist"), fig)
 
 
