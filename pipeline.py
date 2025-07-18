@@ -13,6 +13,7 @@ from stages.core_stages import (
     MultivariateStage,
     TargetStage,
 )
+from feature_advice import FeatureAdviceStage
 
 # default chain (order matters)
 DEFAULT_STAGE_CHAIN: Sequence = [
@@ -22,6 +23,7 @@ DEFAULT_STAGE_CHAIN: Sequence = [
     BivariateStage(),
     MultivariateStage(),
     TargetStage(),
+    FeatureAdviceStage(),
 ]
 
 

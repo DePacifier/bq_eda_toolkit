@@ -19,6 +19,7 @@
 | `analysis_context.py` | In-memory store for result tables & figures—later export to HTML / Markdown. |
 | cost guard | Dry-run every query; abort if bytes scanned > configurable limit (default 1 GB). |
 | cache | In-memory DataFrame cache per notebook session—re-plots are instant, no extra BigQuery cost. |
+| `feature_advice.py` | Auto-suggest encoding, scaling and interaction plans based on profiling results. |
 
 ---
 
@@ -67,4 +68,11 @@ ctx = Pipeline().run(viz)
 ctx.get_table("quality.unique_ratio")          # unique-value ratios
 ctx.get_table("quality.categorical_quality")   # categorical singleton stats
 ctx.get_table("target.class_balance")          # distribution of target classes
+ctx.get_table("feature_advice.encoding_plan")  # suggested encodings
+ctx.get_table("feature_advice.imputation_plan")  # how to fill missing values
 ```
+
+The `FeatureAdviceStage` consumes earlier statistics to auto‑generate
+encoding, imputation and scaling suggestions, plus a list of possible
+interaction terms. These tables can guide feature engineering for a
+machine learning model.
