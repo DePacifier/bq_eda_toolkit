@@ -351,12 +351,32 @@ class MultivariateStage(BaseStage):
         }).sort_values("VIF", ascending=False)
         ctx.add_table(self.key("vif"), vif)
 
-        # Quick PCA (2-D) for visual redundancy check
-        pca = PCA(n_components=2).fit_transform(df[num_cols])
-        pca_df = pd.DataFrame(pca, columns=["PC1", "PC2"])
-        fig = px.scatter(pca_df, x="PC1", y="PC2", opacity=0.4,
-                         title="PCA projection (first 2 components)")
-        ctx.add_figure(self.key("pca_scatter"), fig)
+        # Scatter matrix on a lightweight sample
+        _, pair_fig = viz.pair_plot(num_cols[:5], sample_rows=min(2000, sample_n))
+        if pair_fig is not None:
+            ctx.add_figure(self.key("pair_plot"), pair_fig)
+
+        # ─── 2-D projections ───────────────────────────────────────
+        pca_df, pca_fig = viz.project_2d(method="pca", columns=num_cols, sample_rows=sample_n)
+        if not pca_df.empty:
+            ctx.add_table(self.key("pca_coords"), pca_df)
+            ctx.add_figure(self.key("pca_scatter"), pca_fig)
+
+        tsne_df, tsne_fig = viz.project_2d(method="tsne", columns=num_cols, sample_rows=sample_n)
+        if not tsne_df.empty:
+            ctx.add_table(self.key("tsne_coords"), tsne_df)
+            ctx.add_figure(self.key("tsne_scatter"), tsne_fig)
+
+        umap_df, umap_fig = viz.project_2d(method="umap", columns=num_cols, sample_rows=sample_n)
+        if not umap_df.empty:
+            ctx.add_table(self.key("umap_coords"), umap_df)
+            ctx.add_figure(self.key("umap_scatter"), umap_fig)
+
+        # ─── Clustering potential metrics ───────────────────────────
+        hopkins = BigQueryVisualizer.hopkins_statistic(X)
+        sil = BigQueryVisualizer.silhouette_score_estimate(X)
+        ctx.add_table(self.key("cluster_potential"),
+                      pd.DataFrame({"hopkins_stat": [hopkins], "silhouette_score": [sil]}))
 
 
 # ────────────────────────────────────────────────
