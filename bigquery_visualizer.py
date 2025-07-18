@@ -12,6 +12,10 @@ from sklearn.model_selection import train_test_split
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 from sklearn.neighbors import NearestNeighbors
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class BigQueryVisualizer:
     """
@@ -59,7 +63,7 @@ class BigQueryVisualizer:
         else:
             self.client = bigquery.Client(project=project_id)
             
-        print("Fetching detailed table schema...")
+        logger.info("Fetching detailed table schema...")
         # Initialize properties for each data type category
         self.refresh_schema()
 
@@ -79,16 +83,22 @@ class BigQueryVisualizer:
             self.table_rows = None
             self.table_size_gb = None
 
-        print(f"✅ BigQueryVisualizer initialized for table: {self.table_id}")
-        print(f"    ℹ️ Found {len(self.columns)} total columns:")
-        if self.numeric_columns: print(f"     - {len(self.numeric_columns)} numeric")
-        if self.string_columns: print(f"     - {len(self.string_columns)} string")
-        if self.boolean_columns: print(f"     - {len(self.boolean_columns)} boolean")
-        if self.datetime_columns: print(f"     - {len(self.datetime_columns)} datetime")
-        if self.complex_columns: print(f"     - {len(self.complex_columns)} complex")
-        if self.geographic_columns: print(f"     - {len(self.geographic_columns)} geographic")
+        logger.info(f"✅ BigQueryVisualizer initialized for table: {self.table_id}")
+        logger.info(f"    ℹ️ Found {len(self.columns)} total columns:")
+        if self.numeric_columns:
+            logger.info(f"     - {len(self.numeric_columns)} numeric")
+        if self.string_columns:
+            logger.info(f"     - {len(self.string_columns)} string")
+        if self.boolean_columns:
+            logger.info(f"     - {len(self.boolean_columns)} boolean")
+        if self.datetime_columns:
+            logger.info(f"     - {len(self.datetime_columns)} datetime")
+        if self.complex_columns:
+            logger.info(f"     - {len(self.complex_columns)} complex")
+        if self.geographic_columns:
+            logger.info(f"     - {len(self.geographic_columns)} geographic")
         if self.table_rows is not None and self.table_size_gb is not None:
-            print(
+            logger.info(
                 f"    ℹ️ {self.table_rows:,} rows · {self.table_size_gb:.2f} GB"
             )
 
@@ -159,7 +169,10 @@ class BigQueryVisualizer:
                 f"(limit {self.max_result_bytes/1e9:.2f} GB). Aborting."
             )
 
-        print(f"ℹ️ Query will process {dry_job.total_bytes_processed/1e9:.2f} GB")
+        logger.info(
+            "ℹ️ Query will process %0.2f GB",
+            dry_job.total_bytes_processed / 1e9,
+        )
 
         try:
             query_job = self.client.query(query)
@@ -168,7 +181,7 @@ class BigQueryVisualizer:
                 self._query_cache[query] = df.copy()
             return df
         except Exception as e:
-            print(f"An error occurred: {e}")
+            logger.warning("An error occurred: %s", e)
             return pd.DataFrame()
         
     def clear_cache(self):
@@ -207,7 +220,7 @@ class BigQueryVisualizer:
         Returns:
             pandas.io.formats.style.Styler: A styled DataFrame object for pretty printing.
         """
-        print(f"📄 Fetching table data...")
+        logger.info("📄 Fetching table data...")
         cols = "*" if not columns else ", ".join(columns)
         order_clause = f"ORDER BY {order_by}" if order_by else ""
         
@@ -219,7 +232,7 @@ class BigQueryVisualizer:
         """
         df = self._execute_query(query)
         if df.empty:
-            print("Query returned no data.")
+            logger.warning("Query returned no data.")
             return None
         
         return df.style.set_properties(**{'text-align': 'left'}).set_table_styles([dict(selector='th', props=[('text-align', 'left')])])
@@ -252,7 +265,7 @@ class BigQueryVisualizer:
         if not dimensions:
             raise ValueError("You must provide at least one dimension.")
         
-        print(f"📊 Generating table chart...")
+        logger.info("📊 Generating table chart...")
         
         # 1. Construct the SELECT clause
         select_parts = dimensions.copy()
@@ -298,7 +311,7 @@ class BigQueryVisualizer:
         
         df = self._execute_query(query)
         if df.empty:
-            print("Query returned no data.")
+            logger.warning("Query returned no data.")
             return None
         
         # Rename the percentage column for readability
@@ -354,7 +367,7 @@ class BigQueryVisualizer:
         -------
         pandas.DataFrame, plotly.graph_objs.Figure
         """
-        print("📊 Generating histogram…")
+        logger.info("📊 Generating histogram…")
 
         where_sql = self._build_where_clause(filter)
         if remove_nulls:
@@ -390,7 +403,7 @@ class BigQueryVisualizer:
 
         hist_df = self._execute_query(query)
         if hist_df.empty:
-            print("Query returned no data.")
+            logger.warning("Query returned no data.")
             return pd.DataFrame(), None
 
         total = hist_df['n'].sum()
@@ -559,7 +572,7 @@ class BigQueryVisualizer:
         if not dimensions or not metrics:
             raise ValueError("Provide at least one dimension and one metric.")
 
-        print("📊 Generating categorical chart…")
+        logger.info("📊 Generating categorical chart…")
 
         select_parts, metric_meta = [], {}
         for metric, agg in metrics.items():
@@ -672,7 +685,7 @@ class BigQueryVisualizer:
 
         df = self._execute_query(query)
         if df.empty:
-            print("Query returned no data.")
+            logger.warning("Query returned no data.")
             return pd.DataFrame(), None
         
         if remove_nulls:
@@ -764,7 +777,7 @@ class BigQueryVisualizer:
         -------
         pandas.DataFrame, plotly.graph_objs.Figure
         """
-        print("📈 Generating Plotly scatter plot…")
+        logger.info("📈 Generating Plotly scatter plot…")
 
         # ───────────────────── helper to build metric parts ─────────
         def build_metric(m):
@@ -811,7 +824,7 @@ class BigQueryVisualizer:
         # ───────────────────── run & guard ──────────────────────────
         df = self._execute_query(query)
         if df.empty:
-            print("Query returned no data.")
+            logger.warning("Query returned no data.")
             return pd.DataFrame(), None
 
         # final guard: ensure requested null‑removal
@@ -866,7 +879,10 @@ class BigQueryVisualizer:
             dimensions (list): An ordered list of categorical columns for the hierarchy.
             filter (str, optional): An SQL filter condition.
         """
-        print(f"☀️ Generating sunburst chart for hierarchy: {' -> '.join(dimensions)}")
+        logger.info(
+            "☀️ Generating sunburst chart for hierarchy: %s",
+            " -> ".join(dimensions),
+        )
         where_clause = self._build_where_clause(filter)
         dims_str = ", ".join(dimensions)
         
@@ -880,7 +896,7 @@ class BigQueryVisualizer:
         """
         df = self._execute_query(query)
         if df.empty:
-            print("Query returned no data.")
+            logger.warning("Query returned no data.")
             return pd.DataFrame(), None
         
         fig = px.sunburst(
@@ -935,7 +951,7 @@ class BigQueryVisualizer:
         -------
         pandas.DataFrame, matplotlib.axes.Axes
         """
-        print("📊 Generating boxen plot…")
+        logger.info("📊 Generating boxen plot…")
 
         # ---------- 1. build query -----------------------------------
         select_cols = [numeric_column]
@@ -963,7 +979,7 @@ class BigQueryVisualizer:
         # ---------- 2. run -------------------------------------------
         df = self._execute_query(query)
         if df.empty:
-            print("Query returned no data.")
+            logger.warning("Query returned no data.")
             return pd.DataFrame(), None
 
         # ---------- 3. optional log transform ------------------------
@@ -1043,7 +1059,7 @@ class BigQueryVisualizer:
         -------
         pandas.DataFrame, matplotlib.axes.Axes
         """
-        print("🎻 Generating violin plot…")
+        logger.info("🎻 Generating violin plot…")
 
         # ---------- 1. build query -----------------------------------
         select_cols = [numeric_column]
@@ -1066,7 +1082,7 @@ class BigQueryVisualizer:
 
         df = self._execute_query(query)
         if df.empty:
-            print("Query returned no data.")
+            logger.warning("Query returned no data.")
             return pd.DataFrame(), None
 
         # ---------- 2. optional log transform ------------------------
@@ -1145,7 +1161,7 @@ class BigQueryVisualizer:
         -------
         pandas.DataFrame, plotly.graph_objs.Figure
         """
-        print("🥧 Generating pie / donut chart…")
+        logger.info("🥧 Generating pie / donut chart…")
 
         # ───── 1. build SELECT parts ──────────────────────────────
         if metric:
@@ -1178,7 +1194,7 @@ class BigQueryVisualizer:
 
         df = self._execute_query(query)
         if df.empty:
-            print("Query returned no data.")
+            logger.warning("Query returned no data.")
             return pd.DataFrame(), None
 
         # ───── 2. Plotly pie ──────────────────────────────────────
@@ -1207,7 +1223,7 @@ class BigQueryVisualizer:
         Returns:
             pd.DataFrame: A DataFrame containing the descriptive statistics.
         """
-        print(f"🔍 Analyzing numeric column: {numeric_column}")
+        logger.info("🔍 Analyzing numeric column: %s", numeric_column)
         query = f"""
             SELECT
                 COUNT(*) AS total_rows,
@@ -1225,7 +1241,7 @@ class BigQueryVisualizer:
         """
         df = self._execute_query(query)
         if df.empty or df.iloc[0]['total_rows'] == 0:
-            print("Could not analyze column.")
+            logger.warning("Could not analyze column.")
             return {}
 
         stats = df.iloc[0].to_dict()
@@ -1262,7 +1278,7 @@ class BigQueryVisualizer:
         Returns:
             pd.DataFrame: A DataFrame containing the descriptive statistics.
         """
-        print(f"🔍 Analyzing categorical column: {categorical_column}")
+        logger.info("🔍 Analyzing categorical column: %s", categorical_column)
         query = f"""
             WITH base_stats AS (
                 SELECT
@@ -1290,7 +1306,7 @@ class BigQueryVisualizer:
         """
         df = self._execute_query(query)
         if df.empty or df.iloc[0]['total_rows'] is None:
-            print("Could not analyze column.")
+            logger.warning("Could not analyze column.")
             return {}
 
         stats = df.iloc[0].to_dict()
@@ -1309,7 +1325,7 @@ class BigQueryVisualizer:
         """
         Runs descriptive analysis for all numeric columns and returns a single summary DataFrame.
         """
-        print("🤖 Starting automated analysis for all numeric columns...")
+        logger.info("🤖 Starting automated analysis for all numeric columns...")
         
         all_results = []
         numeric_columns = [col for col in numeric_columns if col in self.numeric_columns] if numeric_columns else self.numeric_columns
@@ -1320,7 +1336,7 @@ class BigQueryVisualizer:
                 all_results.append(summary)
         
         if not all_results:
-            print("No numeric data to analyze.")
+            logger.warning("No numeric data to analyze.")
             return pd.DataFrame()
             
         # Convert list of dicts to a DataFrame
@@ -1334,7 +1350,7 @@ class BigQueryVisualizer:
         ]
         summary_df = summary_df[col_order]
 
-        print("✅ Analysis complete.")
+        logger.info("✅ Analysis complete.")
         # Return a styled DataFrame for pretty printing in notebooks
         return summary_df.style.format({
             'Null Count': '{:,.2f}',
@@ -1357,7 +1373,7 @@ class BigQueryVisualizer:
         Runs analysis for all categorical columns and returns a single summary DataFrame
         with top-N values expanded into separate columns as percentages.
         """
-        print("🤖 Starting automated analysis for all categorical columns...")
+        logger.info("🤖 Starting automated analysis for all categorical columns...")
 
         all_results = []
         categorical_columns = [col for col in categorical_columns if col in self.categorical_columns] if categorical_columns else self.categorical_columns
@@ -1393,7 +1409,7 @@ class BigQueryVisualizer:
                 all_results.append(row)
 
         if not all_results:
-            print("No categorical data to analyze.")
+            logger.warning("No categorical data to analyze.")
             return pd.DataFrame()
         
         summary_df = pd.DataFrame(all_results).set_index('column_name')
@@ -1404,7 +1420,7 @@ class BigQueryVisualizer:
         # ]
         # summary_df = summary_df[col_order]
         
-        print("✅ Analysis complete.")
+        logger.info("✅ Analysis complete.")
         return summary_df.style.background_gradient(cmap='Reds', subset=['Null %'])
 
     # ------------------------------------------------------------------
@@ -1524,7 +1540,7 @@ class BigQueryVisualizer:
         try:
             df.to_csv(fname, index=False)
         except Exception as e:
-            print(f"⚠️ Could not cache sample to {fname}: {e}")
+            logger.warning("⚠️ Could not cache sample to %s: %s", fname, e)
         return df.copy()
 
     def missingness_correlation(

@@ -34,8 +34,11 @@ pip install -r requirements.txt
 ## 🚀 Usage
 
 ```python
+import logging
 from bigquery_visualizer import BigQueryVisualizer
 from pipeline import Pipeline
+
+logging.basicConfig(level=logging.INFO)
 
 viz = BigQueryVisualizer(
     project_id="my-project",
