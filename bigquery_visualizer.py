@@ -17,6 +17,10 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+class QueryExecutionError(RuntimeError):
+    """Raised when executing a query fails."""
+
 class BigQueryVisualizer:
     """
     An enhanced class to connect to a BigQuery table and generate visualizations
@@ -180,12 +184,13 @@ class BigQueryVisualizer:
         try:
             query_job = self.client.query(query)
             df = query_job.to_dataframe()
-            if use_cache and df.memory_usage(deep=True).sum() < self.cache_threshold_bytes:
-                self._query_cache[query] = df.copy()
-            return df
         except Exception as e:
-            logger.warning("An error occurred: %s", e)
-            return pd.DataFrame()
+            logger.error("An error occurred: %s", e)
+            raise QueryExecutionError(str(e)) from e
+
+        if use_cache and df.memory_usage(deep=True).sum() < self.cache_threshold_bytes:
+            self._query_cache[query] = df.copy()
+        return df
         
     def clear_cache(self):
         """Empty the in‑memory query cache."""
