@@ -45,6 +45,22 @@ class BigQueryVisualizer:
         # Initialize properties for each data type category
         self.refresh_schema()
 
+        # ──────────────── fetch basic table stats ────────────────
+        dataset_id, table_name = self.table_id.split('.')
+        meta = self._execute_query(
+            f"""
+            SELECT row_count, size_bytes
+            FROM `{dataset_id}.INFORMATION_SCHEMA.TABLES`
+            WHERE table_name = '{table_name}'
+            """
+        )
+        if not meta.empty:
+            self.table_rows = int(meta['row_count'].iloc[0])
+            self.table_size_gb = float(meta['size_bytes'].iloc[0]) / 1e9
+        else:
+            self.table_rows = None
+            self.table_size_gb = None
+
         print(f"✅ BigQueryVisualizer initialized for table: {self.table_id}")
         print(f"    ℹ️ Found {len(self.columns)} total columns:")
         if self.numeric_columns: print(f"     - {len(self.numeric_columns)} numeric")
@@ -53,6 +69,10 @@ class BigQueryVisualizer:
         if self.datetime_columns: print(f"     - {len(self.datetime_columns)} datetime")
         if self.complex_columns: print(f"     - {len(self.complex_columns)} complex")
         if self.geographic_columns: print(f"     - {len(self.geographic_columns)} geographic")
+        if self.table_rows is not None and self.table_size_gb is not None:
+            print(
+                f"    ℹ️ {self.table_rows:,} rows · {self.table_size_gb:.2f} GB"
+            )
 
     def refresh_schema(self):
         """Re-fetch INFORMATION_SCHEMA and update column lists."""
