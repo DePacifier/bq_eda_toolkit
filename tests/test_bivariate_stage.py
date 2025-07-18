@@ -13,21 +13,14 @@ class DummyViz:
         self.columns = self.numeric_columns + self.categorical_columns
         self.rep_sample_df = None
     def _execute_query(self, q, use_cache=True):
+        if 'CORR(' in q:
+            return pd.DataFrame({'c1':['n1'], 'c2':['n2'], 'corr':[0.5]})
         if 'GROUP BY cat1, cat2' in q:
             return pd.DataFrame({'cat1':['A','A','B','B'], 'cat2':['X','Y','X','Y'], 'n':[50,5,5,50]})
-        if 'TABLESAMPLE SYSTEM' in q and 'n1' in q and 'n2' in q and 'WHERE' not in q:
-            return pd.DataFrame({'n1':[1,2,3,4], 'n2':[10,20,30,40]})
-        if 'TABLESAMPLE SYSTEM' in q and 'WHERE cat1 IS NOT NULL' in q:
-            if 'n1' in q:
-                return pd.DataFrame({'cat1':['A','B','A','B'], 'n1':[1,2,3,4]})
-            if 'n2' in q:
-                return pd.DataFrame({'cat1':['A','B','A','B'], 'n2':[10,20,30,40]})
-        if 'TABLESAMPLE SYSTEM' in q and 'WHERE cat2 IS NOT NULL' in q:
-            if 'n1' in q:
-                return pd.DataFrame({'cat2':['X','Y','X','Y'], 'n1':[1,2,3,4]})
-            if 'n2' in q:
-                return pd.DataFrame({'cat2':['X','Y','X','Y'], 'n2':[10,20,30,40]})
         return pd.DataFrame()
+
+    def numeric_correlations(self, columns, method='pearson'):
+        return pd.DataFrame([[1.0, 0.5],[0.5,1.0]], index=columns, columns=columns)
 
     def get_representative_sample(self, columns=None, max_bytes=None, refresh=False):
         if self.rep_sample_df is None or refresh:
