@@ -10,8 +10,15 @@ class DummyViz(BigQueryVisualizer):
         self.columns = list(df.columns)
         self.numeric_columns = []
         self._df = df
+        self.rep_sample_df = df.copy()
     def _execute_query(self, q, use_cache=True):
         return self._df.copy()
+
+    def get_representative_sample(self, columns=None, max_bytes=None, refresh=False):
+        df = self.rep_sample_df.copy()
+        if columns:
+            df = df[columns]
+        return df
 
 
 def test_missingness_functions():

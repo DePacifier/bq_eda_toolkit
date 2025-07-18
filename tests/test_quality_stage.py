@@ -13,6 +13,11 @@ class DummyViz:
         self.columns = ['a', 'num1', 'cat1']
         self.numeric_columns = ['num1']
         self.categorical_columns = ['cat1']
+        self.rep_sample_df = pd.DataFrame({
+            'a':[1,2,3,4],
+            'num1':[1,2,3,100],
+            'cat1':['x','y','x','z']
+        })
     def _execute_query(self, q, use_cache=True):
         if 'TO_JSON_STRING' in q:
             return pd.DataFrame({'total':[100], 'distinct_rows':[95]})
@@ -27,6 +32,12 @@ class DummyViz:
         if 'TABLESAMPLE' in q:
             return pd.DataFrame({'num1':[1,2,3,100]})
         return pd.DataFrame()
+
+    def get_representative_sample(self, columns=None, max_bytes=None, refresh=False):
+        df = self.rep_sample_df.copy()
+        if columns:
+            df = df[columns]
+        return df
 
     def missingness_map(self, columns=None, sample_rows=100000):
         df = pd.DataFrame({'a':[1,2], 'num1':[1,2], 'cat1':['x','y']})

@@ -11,6 +11,7 @@ class DummyViz:
         self.numeric_columns = ['n1', 'n2']
         self.categorical_columns = ['cat1', 'cat2']
         self.columns = self.numeric_columns + self.categorical_columns
+        self.rep_sample_df = None
     def _execute_query(self, q, use_cache=True):
         if 'GROUP BY cat1, cat2' in q:
             return pd.DataFrame({'cat1':['A','A','B','B'], 'cat2':['X','Y','X','Y'], 'n':[50,5,5,50]})
@@ -27,6 +28,19 @@ class DummyViz:
             if 'n2' in q:
                 return pd.DataFrame({'cat2':['X','Y','X','Y'], 'n2':[10,20,30,40]})
         return pd.DataFrame()
+
+    def get_representative_sample(self, columns=None, max_bytes=None, refresh=False):
+        if self.rep_sample_df is None or refresh:
+            self.rep_sample_df = pd.DataFrame({
+                'n1':[1,2,3,4],
+                'n2':[10,20,30,40],
+                'cat1':['A','B','A','B'],
+                'cat2':['X','Y','X','Y']
+            })
+        df = self.rep_sample_df.copy()
+        if columns:
+            df = df[columns]
+        return df
 
 def test_bivariate_stage_basic():
     ctx = AnalysisContext(params={'lowess_plots': True})

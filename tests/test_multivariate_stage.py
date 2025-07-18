@@ -12,12 +12,23 @@ class DummyViz(BigQueryVisualizer):
         self.numeric_columns = ['n1', 'n2', 'n3']
         self.categorical_columns = []
         self.columns = self.numeric_columns
+        self.rep_sample_df = pd.DataFrame({
+            'n1':[1,2,3,4,5],
+            'n2':[2,4,6,8,10],
+            'n3':[5,3,6,2,1]
+        })
     def _execute_query(self, q, use_cache=True):
         return pd.DataFrame({
             'n1':[1,2,3,4,5],
             'n2':[2,4,6,8,10],
             'n3':[5,3,6,2,1]
         })
+
+    def get_representative_sample(self, columns=None, max_bytes=None, refresh=False):
+        df = self.rep_sample_df.copy()
+        if columns:
+            df = df[columns]
+        return df
 
 
 def test_multivariate_stage_projections():
