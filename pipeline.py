@@ -1,6 +1,7 @@
 from __future__ import annotations
 import time
 from typing import List, Sequence
+import logging
 from analysis_context import AnalysisContext
 from bigquery_visualizer import BigQueryVisualizer
 
@@ -14,6 +15,9 @@ from stages.core_stages import (
     TargetStage,
 )
 from feature_advice import FeatureAdviceStage
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # default chain (order matters)
 DEFAULT_STAGE_CHAIN: Sequence = [
@@ -77,7 +81,7 @@ class Pipeline:
         for stage in self.stages:
             start = time.time()
             if self.verbose:
-                print(f"\n▶ Stage: {stage.id}")
+                logger.info("\n▶ Stage: %s", stage.id)
 
             try:
                 stage.run(viz, ctx)
@@ -85,11 +89,15 @@ class Pipeline:
                 if self.verbose:
                     n_tbl = len([k for k in ctx.tables if k.startswith(stage.id)])
                     n_fig = len([k for k in ctx.figures if k.startswith(stage.id)])
-                    print(f"   ✔ finished in {elapsed:0.2f}s"
-                          f"  ({n_tbl} tables, {n_fig} figs)")
+                    logger.info(
+                        "   ✔ finished in %0.2fs  (%d tables, %d figs)",
+                        elapsed,
+                        n_tbl,
+                        n_fig,
+                    )
             except Exception as e:
-                print(f"   ⚠️  {stage.id} failed: {e}")
+                logger.warning("   ⚠️  %s failed: %s", stage.id, e)
 
         if self.verbose:
-            print("\n✅ Pipeline complete.")
+            logger.info("\n✅ Pipeline complete.")
         return ctx
