@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 import plotly.express as px
 from google.cloud import bigquery
 from google.oauth2 import service_account
+from pathlib import Path
+import hashlib
 import numpy as np
 from scipy.stats import ks_2samp, chi2_contingency, gaussian_kde
 from sklearn.model_selection import train_test_split
@@ -27,6 +29,7 @@ class BigQueryVisualizer:
         max_bytes_scanned: int = 10_000_000_000,
         max_result_bytes: int = 2_000_000_000,
         cache_threshold_bytes: int = 100_000_000,
+        sample_cache_dir: str = ".rep_samples",
     ):
         """
         Initializes the visualizer with BigQuery credentials and table info.
@@ -39,6 +42,7 @@ class BigQueryVisualizer:
             max_bytes_scanned (int): Abort if a dry run estimates scanning more than this many bytes.
             max_result_bytes (int): Abort if ``EXPLAIN`` estimates results larger than this many bytes.
             cache_threshold_bytes (int): Only cache DataFrames smaller than this size.
+            sample_cache_dir (str): Directory to persist representative samples.
         """
         self.project_id = project_id
         self.table_id = table_id
@@ -47,6 +51,10 @@ class BigQueryVisualizer:
         self.max_bytes_scanned = max_bytes_scanned
         self.max_result_bytes = max_result_bytes
         self.cache_threshold_bytes = cache_threshold_bytes
+        self.rep_sample_df: pd.DataFrame | None = None
+        self.rep_sample_columns_key: str | None = None
+        self.sample_cache_dir = Path(sample_cache_dir)
+        self.sample_cache_dir.mkdir(parents=True, exist_ok=True)
         
         if credentials_path:
             self.credentials = service_account.Credentials.from_service_account_file(credentials_path)
@@ -436,21 +444,15 @@ class BigQueryVisualizer:
         """Return a scatter-matrix plot for a sample of ``columns``."""
 
         select_cols = columns + ([color_dimension] if color_dimension else [])
-        base_where = ""
-        if remove_nulls:
-            null_conds = [f"{c} IS NOT NULL" for c in columns]
-            if color_dimension:
-                null_conds.append(f"{color_dimension} IS NOT NULL")
-            base_where = "WHERE " + " AND ".join(null_conds)
+        df = self.get_representative_sample(columns=select_cols)
+        if df.empty:
+            return pd.DataFrame(), None
 
-        query = f"""
-            SELECT {', '.join(select_cols)}
-            FROM {self.full_table_path}
-            {base_where}
-            TABLESAMPLE SYSTEM (1 PERCENT)
-            LIMIT {sample_rows}
-        """
-        df = self._execute_query(query)
+        df = df[select_cols]
+        if remove_nulls:
+            df = df.dropna(subset=select_cols)
+        if len(df) > sample_rows:
+            df = df.sample(sample_rows, random_state=42)
         if df.empty:
             return pd.DataFrame(), None
 
@@ -1433,6 +1435,60 @@ class BigQueryVisualizer:
 
         return pd.DataFrame(results)
 
+    def get_representative_sample(
+        self,
+        columns: list[str] | None = None,
+        max_bytes: int | None = None,
+        refresh: bool = False,
+    ) -> pd.DataFrame:
+        """Return and cache a representative sample of the table."""
+
+        cols = columns or self.columns
+        key = ",".join(sorted(cols))
+        fname = self.sample_cache_dir / f"rep_{hashlib.md5(key.encode()).hexdigest()}.csv"
+
+        if (
+            self.rep_sample_df is not None
+            and self.rep_sample_columns_key == key
+            and not refresh
+        ):
+            return self.rep_sample_df.copy()
+        if not refresh and fname.exists():
+            df = pd.read_csv(fname)
+            self.rep_sample_df = df
+            self.rep_sample_columns_key = key
+            return df.copy()
+
+        limit_bytes = max_bytes or self.max_result_bytes
+        size_map = {
+            "numeric": 8,
+            "string": 20,
+            "boolean": 1,
+            "datetime": 8,
+            "complex": 50,
+            "geographic": 16,
+            "other": 8,
+        }
+        cat_lookup = dict(zip(self.schema_df["column_name"], self.schema_df["category"]))
+        row_bytes = sum(size_map.get(cat_lookup.get(c, "other"), 8) for c in cols)
+        row_bytes = max(1, row_bytes)
+        max_rows = max(1, limit_bytes // row_bytes)
+
+        query = (
+            f"SELECT {', '.join(cols)} FROM {self.full_table_path} TABLESAMPLE SYSTEM (1 PERCENT) "
+            f"LIMIT {max_rows}"
+        )
+        df = self._execute_query(query)
+        if not df.empty:
+            self.evaluate_sample_bias(sample_rows=min(1000, len(df)))
+        self.rep_sample_df = df
+        self.rep_sample_columns_key = key
+        try:
+            df.to_csv(fname, index=False)
+        except Exception as e:
+            print(f"⚠️ Could not cache sample to {fname}: {e}")
+        return df.copy()
+
     def missingness_correlation(
         self,
         columns: list[str] | None = None,
@@ -1441,13 +1497,12 @@ class BigQueryVisualizer:
         """Return the correlation matrix of null indicators for ``columns``."""
 
         cols = columns or self.columns
-        q = (
-            f"SELECT {', '.join(cols)} FROM {self.full_table_path} "
-            f"TABLESAMPLE SYSTEM (1 PERCENT) LIMIT {sample_rows}"
-        )
-        df = self._execute_query(q)
+        df = self.get_representative_sample(columns=cols)
         if df.empty:
             return pd.DataFrame()
+        df = df[cols]
+        if len(df) > sample_rows:
+            df = df.sample(sample_rows, random_state=42)
         miss = df[cols].isna().astype(int)
         return miss.corr()
 
@@ -1461,13 +1516,12 @@ class BigQueryVisualizer:
         """Identify the most common combinations of missing values."""
 
         cols = columns or self.columns
-        q = (
-            f"SELECT {', '.join(cols)} FROM {self.full_table_path} "
-            f"TABLESAMPLE SYSTEM (1 PERCENT) LIMIT {sample_rows}"
-        )
-        df = self._execute_query(q)
+        df = self.get_representative_sample(columns=cols)
         if df.empty:
             return pd.DataFrame()
+        df = df[cols]
+        if len(df) > sample_rows:
+            df = df.sample(sample_rows, random_state=42)
 
         mask = df[cols].isna()
         combo = mask.apply(lambda r: '|'.join(r.index[r]), axis=1)
@@ -1491,13 +1545,12 @@ class BigQueryVisualizer:
         """
 
         cols = columns or self.columns
-        q = (
-            f"SELECT {', '.join(cols)} FROM {self.full_table_path} "
-            f"TABLESAMPLE SYSTEM (1 PERCENT) LIMIT {sample_rows}"
-        )
-        df = self._execute_query(q)
+        df = self.get_representative_sample(columns=cols)
         if df.empty:
             return pd.DataFrame(), None, pd.DataFrame()
+        df = df[cols]
+        if len(df) > sample_rows:
+            df = df.sample(sample_rows, random_state=42)
 
         mask = df[cols].isna()
 
@@ -1597,11 +1650,12 @@ class BigQueryVisualizer:
     ) -> tuple[pd.DataFrame, px.scatter] | tuple[pd.DataFrame, None]:
         """Return a 2-D projection of ``columns`` using PCA/t-SNE/UMAP."""
 
-        q = (
-            f"SELECT {', '.join(columns)} FROM {self.full_table_path} "
-            f"TABLESAMPLE SYSTEM (1 PERCENT) LIMIT {sample_rows}"
-        )
-        df = self._execute_query(q).dropna()
+        df = self.get_representative_sample(columns=columns)
+        if df.empty:
+            return pd.DataFrame(), None
+        df = df[columns].dropna()
+        if len(df) > sample_rows:
+            df = df.sample(sample_rows, random_state=42)
         if df.empty:
             return pd.DataFrame(), None
 

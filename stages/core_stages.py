@@ -177,9 +177,9 @@ class QualityStage(BaseStage):
         # IsolationForest on numeric sample
         sample_n = int(ctx.params.get("sample_rows", 10000))
         if viz.numeric_columns:
-            sample_df = viz._execute_query(
-                f"SELECT {', '.join(viz.numeric_columns)} FROM {viz.full_table_path} TABLESAMPLE SYSTEM (1 PERCENT) LIMIT {sample_n}"
-            )
+            sample_df = viz.get_representative_sample(columns=viz.numeric_columns)
+            if len(sample_df) > sample_n:
+                sample_df = sample_df.sample(sample_n, random_state=42)
             if not sample_df.empty:
                 iso = IsolationForest(contamination=0.01, random_state=42)
                 X = sample_df[viz.numeric_columns].dropna()
@@ -232,12 +232,9 @@ class BivariateStage(BaseStage):
 
         # ─── Numeric correlations ──────────────────────────────────────
         if num_cols:
-            col_list = ", ".join(num_cols)
-            q = (
-                f"SELECT {col_list} FROM {viz.full_table_path} "
-                f"TABLESAMPLE SYSTEM (1 PERCENT) LIMIT {sample_n}"
-            )
-            df = viz._execute_query(q)
+            df = viz.get_representative_sample(columns=num_cols)
+            if len(df) > sample_n:
+                df = df.sample(sample_n, random_state=42)
             if not df.empty:
                 pear = df.corr(method="pearson")
                 ctx.add_table(self.key("pearson_corr"), pear)
@@ -259,13 +256,9 @@ class BivariateStage(BaseStage):
         numcat_results = []
         for num in viz.numeric_columns:
             for cat in viz.categorical_columns:
-                q = (
-                    f"SELECT {cat}, {num} FROM {viz.full_table_path} "
-                    f"TABLESAMPLE SYSTEM (1 PERCENT) "
-                    f"WHERE {cat} IS NOT NULL AND {num} IS NOT NULL "
-                    f"LIMIT {sample_n}"
-                )
-                df_pair = viz._execute_query(q)
+                df_pair = viz.get_representative_sample(columns=[cat, num]).dropna()
+                if len(df_pair) > sample_n:
+                    df_pair = df_pair.sample(sample_n, random_state=42)
                 if df_pair.empty:
                     continue
 
@@ -338,8 +331,9 @@ class MultivariateStage(BaseStage):
 
         # pull sample
         sample_n = int(ctx.params.get("sample_rows", 100_000))
-        q = f"SELECT {', '.join(num_cols)} FROM {viz.full_table_path} TABLESAMPLE SYSTEM (1 PERCENT) LIMIT {sample_n}"
-        df = viz._execute_query(q).dropna()
+        df = viz.get_representative_sample(columns=num_cols).dropna()
+        if len(df) > sample_n:
+            df = df.sample(sample_n, random_state=42)
         if df.empty:
             return
 
