@@ -1486,17 +1486,16 @@ class BigQueryVisualizer:
         key = ",".join(sorted(cols))
         fname = self.sample_cache_dir / f"rep_{hashlib.md5(key.encode()).hexdigest()}.csv"
 
+        # We intentionally do not load previously cached samples from disk
+        # so queries execute at least once per session. The sampled data is still
+        # written to ``fname`` for offline inspection.
+
         if (
             self.rep_sample_df is not None
             and self.rep_sample_columns_key == key
             and not refresh
         ):
             return self.rep_sample_df.copy()
-        if not refresh and fname.exists():
-            df = pd.read_csv(fname)
-            self.rep_sample_df = df
-            self.rep_sample_columns_key = key
-            return df.copy()
 
         limit_bytes = max_bytes or self.max_result_bytes
         size_map = {
