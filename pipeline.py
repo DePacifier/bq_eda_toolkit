@@ -2,11 +2,11 @@ from __future__ import annotations
 import time
 from typing import List, Sequence
 import logging
-from analysis_context import AnalysisContext
-from bigquery_visualizer import BigQueryVisualizer
+from .analysis_context import AnalysisContext
+from .bigquery_visualizer import BigQueryVisualizer
 
 # import all core stages
-from stages.core_stages import (
+from .stages.core_stages import (
     ProfilingStage,
     QualityStage,
     UnivariateStage,
@@ -14,7 +14,7 @@ from stages.core_stages import (
     MultivariateStage,
     TargetStage,
 )
-from feature_advice import FeatureAdviceStage
+from .feature_advice import FeatureAdviceStage
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

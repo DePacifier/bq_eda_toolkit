@@ -5,9 +5,9 @@ import plotly.express as px
 from scipy.stats import chi2_contingency, ttest_ind, f_oneway
 from scipy.stats import spearmanr
 import numpy as np
-from stages.base import BaseStage
-from analysis_context import AnalysisContext
-from bigquery_visualizer import BigQueryVisualizer
+from .base import BaseStage
+from ..analysis_context import AnalysisContext
+from ..bigquery_visualizer import BigQueryVisualizer
 
 from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
 from statsmodels.stats.outliers_influence import variance_inflation_factor

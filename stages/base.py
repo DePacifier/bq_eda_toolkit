@@ -1,8 +1,8 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
-from analysis_context import AnalysisContext
-from bigquery_visualizer import BigQueryVisualizer   # adjust import path if needed
+from ..analysis_context import AnalysisContext
+from ..bigquery_visualizer import BigQueryVisualizer   # adjust import path if needed
 
 
 class BaseStage(ABC):
