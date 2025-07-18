@@ -2,7 +2,9 @@
 from __future__ import annotations
 import pandas as pd
 import plotly.express as px
-from scipy.stats import chi2_contingency
+from scipy.stats import chi2_contingency, ttest_ind, f_oneway
+from scipy.stats import spearmanr
+import numpy as np
 from stages.base import BaseStage
 from analysis_context import AnalysisContext
 from bigquery_visualizer import BigQueryVisualizer
@@ -225,22 +227,75 @@ class BivariateStage(BaseStage):
     id = "bivariate"
 
     def run(self, viz: BigQueryVisualizer, ctx: AnalysisContext):
-        # Pearson correlation matrix (sample rows for practicality)
         sample_n = int(ctx.params.get("sample_rows", 200_000))
-        num_cols = viz.numeric_columns[:30]                      # cap width
+        num_cols = viz.numeric_columns[:30]
+
+        # ─── Numeric correlations ──────────────────────────────────────
         if num_cols:
             col_list = ", ".join(num_cols)
-            q = f"SELECT {col_list} FROM {viz.full_table_path} TABLESAMPLE SYSTEM (1 PERCENT) LIMIT {sample_n}"
+            q = (
+                f"SELECT {col_list} FROM {viz.full_table_path} "
+                f"TABLESAMPLE SYSTEM (1 PERCENT) LIMIT {sample_n}"
+            )
             df = viz._execute_query(q)
-            corr = df.corr(method="pearson")
-            ctx.add_table(self.key("corr_matrix"), corr)
+            if not df.empty:
+                pear = df.corr(method="pearson")
+                ctx.add_table(self.key("pearson_corr"), pear)
+                fig = px.imshow(pear, title="Numeric Correlation Matrix", color_continuous_scale="RdBu_r")
+                ctx.add_figure(self.key("corr_heatmap"), fig)
 
-            fig = px.imshow(corr, title="Numeric Correlation Matrix", color_continuous_scale="RdBu_r")
-            ctx.add_figure(self.key("corr_heatmap"), fig)
+                spear = df.corr(method="spearman")
+                ctx.add_table(self.key("spearman_corr"), spear)
 
-        # χ² for first two categoricals
-        if len(viz.categorical_columns) >= 2:
-            c1, c2 = viz.categorical_columns[:2]
+                if ctx.params.get("lowess_plots"):
+                    from itertools import combinations
+
+                    for x, y in combinations(num_cols[:5], 2):
+                        fig = px.scatter(df, x=x, y=y, trendline="lowess",
+                                         title=f"{y} vs {x} (LOWESS)")
+                        ctx.add_figure(self.key(f"{y}_vs_{x}.lowess"), fig)
+
+        # ─── Numeric ~ Categorical tests ───────────────────────────────
+        numcat_results = []
+        for num in viz.numeric_columns:
+            for cat in viz.categorical_columns:
+                q = (
+                    f"SELECT {cat}, {num} FROM {viz.full_table_path} "
+                    f"TABLESAMPLE SYSTEM (1 PERCENT) "
+                    f"WHERE {cat} IS NOT NULL AND {num} IS NOT NULL "
+                    f"LIMIT {sample_n}"
+                )
+                df_pair = viz._execute_query(q)
+                if df_pair.empty:
+                    continue
+
+                fig = px.box(df_pair, x=cat, y=num, points="outliers",
+                             title=f"{num} by {cat}")
+                ctx.add_figure(self.key(f"{num}_by_{cat}.box"), fig)
+
+                groups = [g[num].tolist() for _, g in df_pair.groupby(cat)]
+                if len(groups) < 2:
+                    continue
+                if len(groups) == 2:
+                    _, p = ttest_ind(groups[0], groups[1], equal_var=False)
+                    test = "t-test"
+                else:
+                    _, p = f_oneway(*groups)
+                    test = "anova"
+                numcat_results.append({
+                    "numeric_column": num,
+                    "categorical_column": cat,
+                    "test": test,
+                    "p_value": p,
+                })
+
+        if numcat_results:
+            ctx.add_table(self.key("num_cat_tests"), pd.DataFrame(numcat_results))
+
+        # ─── Categorical pair tests ────────────────────────────────────
+        cat_results = []
+        from itertools import combinations
+        for c1, c2 in combinations(viz.categorical_columns, 2):
             q = f"""
                 SELECT {c1}, {c2}, COUNT(*) AS n
                 FROM {viz.full_table_path}
@@ -248,11 +303,26 @@ class BivariateStage(BaseStage):
                 GROUP BY {c1}, {c2}
             """
             tbl = viz._execute_query(q)
-            if not tbl.empty:
-                contingency = tbl.pivot_table(index=c1, columns=c2, values="n", fill_value=0)
-                chi2, p, *_ = chi2_contingency(contingency)
-                ctx.add_table(self.key("chi2_summary"),
-                              pd.DataFrame({"chi2": [chi2], "p_value": [p]}))
+            if tbl.empty:
+                continue
+            contingency = tbl.pivot_table(index=c1, columns=c2, values="n", fill_value=0)
+            chi2, p, _, _ = chi2_contingency(contingency)
+            if p >= 0.05:
+                continue
+            n = contingency.values.sum()
+            r, k = contingency.shape
+            denom = n * (min(r - 1, k - 1))
+            cramers_v = np.sqrt(chi2 / denom) if denom else np.nan
+            cat_results.append({
+                "column_1": c1,
+                "column_2": c2,
+                "chi2": chi2,
+                "p_value": p,
+                "cramers_v": cramers_v,
+            })
+
+        if cat_results:
+            ctx.add_table(self.key("cat_pair_tests"), pd.DataFrame(cat_results))
 
 
 # ────────────────────────────────────────────────
