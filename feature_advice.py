@@ -1,8 +1,8 @@
 from __future__ import annotations
 import pandas as pd
-from stages.base import BaseStage
-from analysis_context import AnalysisContext
-from bigquery_visualizer import BigQueryVisualizer
+from .stages.base import BaseStage
+from .analysis_context import AnalysisContext
+from .bigquery_visualizer import BigQueryVisualizer
 
 
 class FeatureAdviceStage(BaseStage):

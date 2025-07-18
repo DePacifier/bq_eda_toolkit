@@ -26,17 +26,17 @@
 ## 📦 Installation
 
 ```bash
-git clone https://github.com/DePacifier/bq_eda_toolkit.git
-cd bq_eda_toolkit
-pip install -r requirements.txt
+pip install bq-eda-toolkit
+# or for the latest development version
+pip install git+https://github.com/DePacifier/bq_eda_toolkit.git
 ```
 
 ## 🚀 Usage
 
 ```python
 import logging
-from bigquery_visualizer import BigQueryVisualizer
-from pipeline import Pipeline
+from bq_eda_toolkit.bigquery_visualizer import BigQueryVisualizer
+from bq_eda_toolkit.pipeline import Pipeline
 
 logging.basicConfig(level=logging.INFO)
 

@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bq-eda-toolkit"
+version = "0.1.0"
+description = "Turn a raw BigQuery table into a model-ready insight deck in minutes"
+readme = "readme.md"
+authors = [{name = "BigQuery EDA Toolkit Maintainers"}]
+license = {text = "MIT"}
+requires-python = ">=3.8"
+dependencies = [
+    "google-cloud-bigquery",
+    "matplotlib",
+    "pandas",
+    "plotly",
+    "seaborn",
+    "statsmodels",
+    "scikit-learn",
+    "numpy",
+    "jinja2",
+    "umap-learn",
+]
+
+[project.urls]
+Homepage = "https://github.com/DePacifier/bq_eda_toolkit"
+Repository = "https://github.com/DePacifier/bq_eda_toolkit"
+
+[tool.setuptools]
+packages = ["bq_eda_toolkit", "bq_eda_toolkit.stages"]
+
+[tool.setuptools.package-dir]
+"bq_eda_toolkit" = "."
+"bq_eda_toolkit.stages" = "stages"
