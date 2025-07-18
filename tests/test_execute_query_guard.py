@@ -4,7 +4,7 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 import pandas as pd
 import pytest
 
-from bigquery_visualizer import BigQueryVisualizer
+from bigquery_visualizer import BigQueryVisualizer, QueryExecutionError
 
 class FakePlanEntry:
     def __init__(self, est):
@@ -29,18 +29,21 @@ class FakeResultJob:
         return self._df
 
 class DummyClient:
-    def __init__(self, est_bytes, df):
+    def __init__(self, est_bytes, df, raise_error=False):
         self.est_bytes = est_bytes
         self.df = df
+        self.raise_error = raise_error
     def query(self, q, job_config=None):
         if job_config is not None:
             return FakeDryJob()
         if q.startswith("EXPLAIN"):
             return FakePlanJob(self.est_bytes)
+        if self.raise_error:
+            raise RuntimeError("boom")
         return FakeResultJob(self.df)
 
 class DummyViz(BigQueryVisualizer):
-    def __init__(self, est_bytes=0, df=None, cache_threshold=100):
+    def __init__(self, est_bytes=0, df=None, cache_threshold=100, raise_error=False):
         self.project_id = 'p'
         self.table_id = 'd.t'
         self.full_table_path = 'x'
@@ -48,7 +51,7 @@ class DummyViz(BigQueryVisualizer):
         self.max_bytes_scanned = 10_000
         self.max_result_bytes = 2_000_000_000
         self.cache_threshold_bytes = cache_threshold
-        self.client = DummyClient(est_bytes, df if df is not None else pd.DataFrame())
+        self.client = DummyClient(est_bytes, df if df is not None else pd.DataFrame(), raise_error=raise_error)
         self.auto_show = False
 
 
@@ -64,3 +67,9 @@ def test_big_df_not_cached():
     out = viz._execute_query("SELECT 1")
     assert out.equals(df)
     assert "SELECT 1" not in viz._query_cache
+
+
+def test_query_errors_raise():
+    viz = DummyViz(est_bytes=0, df=pd.DataFrame(), raise_error=True)
+    with pytest.raises(QueryExecutionError):
+        viz._execute_query("SELECT 1")
