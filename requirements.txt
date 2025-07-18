@@ -6,3 +6,4 @@ seaborn
 statsmodels
 scikit-learn
 numpy
+jinja2

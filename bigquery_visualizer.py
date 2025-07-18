@@ -5,7 +5,7 @@ import plotly.express as px
 from google.cloud import bigquery
 from google.oauth2 import service_account
 import numpy as np
-from scipy.stats import ks_2samp, chi2_contingency
+from scipy.stats import ks_2samp, chi2_contingency, gaussian_kde
 from sklearn.model_selection import train_test_split
 
 class BigQueryVisualizer:
@@ -256,6 +256,7 @@ class BigQueryVisualizer:
         histnorm: str | None = None,          # 'percent' | 'probability' | 'density' | None
         log_x: bool = False,
         cumulative: bool = False,
+        kde: bool = False,
         title: str | None = None,
     ):
         """
@@ -281,6 +282,8 @@ class BigQueryVisualizer:
             Log-10 scale the X-axis.
         cumulative : bool
             Show cumulative distribution.
+        kde : bool
+            Overlay a kernel density estimate.
         title : str | None
             Custom chart title.
 
@@ -332,13 +335,25 @@ class BigQueryVisualizer:
             color=color_dimension,
             nbins=bins,
             histnorm=histnorm,
-            cumulative_enabled=cumulative,
+            cumulative=cumulative,
             log_x=log_x,
             color_discrete_sequence=px.colors.qualitative.Set3,
             title=title or f"Distribution of {numeric_column}"
                 + (f" by {color_dimension}" if color_dimension else ""),
             height=500,
         )
+
+        if kde:
+            values = df[plot_col].dropna().to_numpy()
+            if len(values) > 1:
+                kde_x = np.linspace(values.min(), values.max(), 200)
+                density = gaussian_kde(values)(kde_x)
+                if histnorm is None:
+                    bin_w = (values.max() - values.min()) / (bins or 30)
+                    density = density * len(values) * bin_w
+                elif histnorm == "percent":
+                    density = density * 100
+                fig.add_scatter(x=kde_x, y=density, mode="lines", name="KDE")
 
         fig.update_layout(
             xaxis_title=f"{numeric_column} (log10)" if log_x else numeric_column,
@@ -1063,6 +1078,8 @@ class BigQueryVisualizer:
                 VAR_SAMP({numeric_column}) AS variance,
                 MIN({numeric_column}) AS min,
                 MAX({numeric_column}) AS max,
+                SKEWNESS({numeric_column}) AS skewness,
+                KURTOSIS({numeric_column}) AS kurtosis,
                 APPROX_QUANTILES({numeric_column}, 4) AS quartiles
             FROM {self.full_table_path}
         """
@@ -1083,6 +1100,8 @@ class BigQueryVisualizer:
             "Std Dev": stats['std_dev'],
             "Variance": stats['variance'],
             "Min": stats['min'],
+            "Skewness": stats.get('skewness'),
+            "Kurtosis": stats.get('kurtosis'),
             "25% (Q1)": quartiles[1],
             "50% (Median)": quartiles[2], # 50th percentile
             "75% (Q3)": quartiles[3],
@@ -1169,8 +1188,9 @@ class BigQueryVisualizer:
         
         # Define a nice column order
         col_order = [
-            'Null Count', 'Null %', 'Mean', 'Std Dev', 'Variance', 'Min', 
-            '25% (Q1)', '50% (Median)', '75% (Q3)', 'Max', 'IQR'
+            'Null Count', 'Null %', 'Mean', 'Std Dev', 'Variance', 'Skewness',
+            'Kurtosis', 'Min', '25% (Q1)', '50% (Median)', '75% (Q3)', 'Max',
+            'IQR'
         ]
         summary_df = summary_df[col_order]
 
@@ -1182,6 +1202,8 @@ class BigQueryVisualizer:
             'Mean': '{:,.2f}',
             'Std Dev': '{:,.2f}',
             'Variance': '{:,.2f}',
+            'Skewness': '{:,.2f}',
+            'Kurtosis': '{:,.2f}',
             'Min': '{:,.2f}',
             '25% (Q1)': '{:,.2f}',
             '50% (Median)': '{:,.2f}',
