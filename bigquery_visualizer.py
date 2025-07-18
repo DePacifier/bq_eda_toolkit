@@ -7,6 +7,12 @@ from google.oauth2 import service_account
 import numpy as np
 from scipy.stats import ks_2samp, chi2_contingency, gaussian_kde
 from sklearn.model_selection import train_test_split
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
+from umap import UMAP
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
+from sklearn.neighbors import NearestNeighbors
 
 class BigQueryVisualizer:
     """
@@ -365,6 +371,47 @@ class BigQueryVisualizer:
         )
         fig.show()
 
+        return df, fig
+
+    def pair_plot(
+        self,
+        columns: list[str],
+        *,
+        color_dimension: str | None = None,
+        sample_rows: int = 5000,
+        remove_nulls: bool = True,
+    ) -> tuple[pd.DataFrame, px.scatter_matrix] | tuple[pd.DataFrame, None]:
+        """Return a scatter-matrix plot for a sample of ``columns``."""
+
+        select_cols = columns + ([color_dimension] if color_dimension else [])
+        base_where = ""
+        if remove_nulls:
+            null_conds = [f"{c} IS NOT NULL" for c in columns]
+            if color_dimension:
+                null_conds.append(f"{color_dimension} IS NOT NULL")
+            base_where = "WHERE " + " AND ".join(null_conds)
+
+        query = f"""
+            SELECT {', '.join(select_cols)}
+            FROM {self.full_table_path}
+            {base_where}
+            TABLESAMPLE SYSTEM (1 PERCENT)
+            LIMIT {sample_rows}
+        """
+        df = self._execute_query(query)
+        if df.empty:
+            return pd.DataFrame(), None
+
+        fig = px.scatter_matrix(
+            df,
+            dimensions=columns,
+            color=color_dimension,
+            height=800,
+            title="Scatter Matrix",
+        )
+        fig.update_traces(diagonal_visible=False, showupperhalf=False)
+        fig.update_layout(margin=dict(l=0, r=0, t=40, b=0))
+        fig.show()
         return df, fig
     
     def plot_categorical_chart(
@@ -1485,3 +1532,105 @@ class BigQueryVisualizer:
         balance_df.index.name = target_column
 
         return splits, balance_df
+
+    # ------------------------------------------------------------------
+    #  Advanced analytics helpers
+    # ------------------------------------------------------------------
+    def project_2d(
+        self,
+        *,
+        method: str,
+        columns: list[str],
+        sample_rows: int = 10000,
+    ) -> tuple[pd.DataFrame, px.scatter] | tuple[pd.DataFrame, None]:
+        """Return a 2-D projection of ``columns`` using PCA/t-SNE/UMAP."""
+
+        q = (
+            f"SELECT {', '.join(columns)} FROM {self.full_table_path} "
+            f"TABLESAMPLE SYSTEM (1 PERCENT) LIMIT {sample_rows}"
+        )
+        df = self._execute_query(q).dropna()
+        if df.empty:
+            return pd.DataFrame(), None
+
+        X = df[columns].values
+        if method.lower() == "pca":
+            coords = PCA(n_components=2).fit_transform(X)
+        elif method.lower() == "tsne":
+            perplex = max(2, min(30, X.shape[0] // 2))
+            coords = TSNE(n_components=2, perplexity=perplex, random_state=42).fit_transform(X)
+        elif method.lower() == "umap":
+            coords = UMAP(n_components=2, random_state=42).fit_transform(X)
+        else:
+            raise ValueError("method must be 'pca', 'tsne', or 'umap'")
+
+        proj_df = pd.DataFrame(coords, columns=["dim1", "dim2"])
+        fig = px.scatter(proj_df, x="dim1", y="dim2", opacity=0.4,
+                         title=f"{method.upper()} projection (2D)")
+        fig.update_layout(margin=dict(l=0, r=0, t=40, b=0))
+        fig.show()
+        return proj_df, fig
+
+    def partial_dependence(
+        self,
+        *,
+        feature: str,
+        target: str,
+        bins: int = 10,
+    ) -> tuple[pd.DataFrame, px.line] | tuple[pd.DataFrame, None]:
+        """Compute simple 1-D partial dependence via BigQuery aggregation."""
+
+        query = f"""
+            WITH stats AS (
+                SELECT MIN({feature}) AS min_val, MAX({feature}) AS max_val
+                FROM {self.full_table_path}
+            )
+            SELECT
+              CAST(({feature} - stats.min_val) /
+                   NULLIF(stats.max_val - stats.min_val,0) * {bins} AS INT64) AS bin_id,
+              AVG({target}) AS avg_target,
+              COUNT(*) AS n
+            FROM {self.full_table_path}, stats
+            WHERE {feature} IS NOT NULL AND {target} IS NOT NULL
+            GROUP BY bin_id
+            ORDER BY bin_id
+        """
+        df = self._execute_query(query)
+        if df.empty:
+            return pd.DataFrame(), None
+
+        fig = px.line(df, x="bin_id", y="avg_target",
+                      markers=True, title=f"Partial dependence of {target} on {feature}")
+        fig.update_layout(margin=dict(l=0, r=0, t=40, b=0))
+        fig.show()
+        return df, fig
+
+    @staticmethod
+    def hopkins_statistic(X: np.ndarray, n_samples: int | None = None) -> float:
+        """Compute the Hopkins statistic for cluster tendency."""
+
+        n, _ = X.shape
+        m = n_samples or min(100, n - 1)
+        rng = np.random.default_rng(42)
+        idx = rng.choice(n, m, replace=False)
+        sample = X[idx]
+
+        uniform = np.empty_like(sample)
+        for j in range(X.shape[1]):
+            mn, mx = X[:, j].min(), X[:, j].max()
+            uniform[:, j] = rng.uniform(mn, mx, size=m)
+
+        nbrs = NearestNeighbors(n_neighbors=1).fit(X)
+        u_dist, _ = nbrs.kneighbors(uniform)
+        w_dist, _ = nbrs.kneighbors(sample)
+        H = u_dist.sum() / (u_dist.sum() + w_dist.sum())
+        return float(H)
+
+    @staticmethod
+    def silhouette_score_estimate(X: np.ndarray, n_clusters: int = 2) -> float:
+        """Compute a rough silhouette score using KMeans."""
+
+        if len(X) <= n_clusters:
+            return float("nan")
+        labels = KMeans(n_clusters=n_clusters, n_init=10, random_state=42).fit_predict(X)
+        return float(silhouette_score(X, labels))
