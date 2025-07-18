@@ -43,6 +43,9 @@ viz = BigQueryVisualizer(
     credentials_path="path/to/key.json",
 )
 
+# prints: e.g. "ℹ️ 100000 rows · 2.5 GB"
+print(f"{viz.table_rows} rows, {viz.table_size_gb:.2f} GB")
+
 # run the default EDA pipeline
 Pipeline().run(viz)
 
