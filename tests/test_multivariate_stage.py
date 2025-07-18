@@ -17,6 +17,7 @@ class DummyViz(BigQueryVisualizer):
             'n2':[2,4,6,8,10],
             'n3':[5,3,6,2,1]
         })
+        self.auto_show = False
     def _execute_query(self, q, use_cache=True):
         if 'ML.PCA' in q or 'ML.TSNE' in q or 'ML.UMAP' in q:
             return pd.DataFrame({'dim1':[0.1,0.2], 'dim2':[0.2,0.4]})

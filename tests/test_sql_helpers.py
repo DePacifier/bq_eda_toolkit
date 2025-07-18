@@ -10,6 +10,7 @@ class DummyViz(BigQueryVisualizer):
         self.columns = ['a', 'b']
         self.numeric_columns = ['a', 'b']
         self.categorical_columns = []
+        self.auto_show = False
 
     def _execute_query(self, q, use_cache=True):
         if 'CORR(' in q:

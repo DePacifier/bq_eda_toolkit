@@ -12,6 +12,7 @@ class DummyViz(BigQueryVisualizer):
         self.numeric_columns = ['num1', 'num2']
         self.columns = self.numeric_columns
         self.categorical_columns = []
+        self.auto_show = False
     def _execute_query(self, q, use_cache=True):
         if 'VAR_SAMP(num1)' in q:
             return pd.DataFrame({

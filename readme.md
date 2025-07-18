@@ -67,6 +67,9 @@ splits, balance = viz.generate_splits(
 print(balance)
 ```
 
+Visualisation functions return Plotly or Matplotlib objects. They do not call
+``.show()`` themselves, so display or save the returned figure when needed.
+
 ### Accessing results
 
 Each stage stores its output tables and figures in an `AnalysisContext` instance.

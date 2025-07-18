@@ -10,6 +10,7 @@ class DummyViz(BigQueryVisualizer):
         self.columns = ['num']
         self.numeric_columns = ['num']
         self.categorical_columns = []
+        self.auto_show = False
 
     def _execute_query(self, q, use_cache=True):
         if 'APPROX_QUANTILES' in q:
