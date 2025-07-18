@@ -49,6 +49,7 @@ class DummyViz(BigQueryVisualizer):
         self.max_result_bytes = 2_000_000_000
         self.cache_threshold_bytes = cache_threshold
         self.client = DummyClient(est_bytes, df if df is not None else pd.DataFrame())
+        self.auto_show = False
 
 
 def test_result_size_guard_raises():

@@ -27,6 +27,7 @@ class BigQueryVisualizer:
         max_result_bytes: int = 2_000_000_000,
         cache_threshold_bytes: int = 100_000_000,
         sample_cache_dir: str = ".rep_samples",
+        auto_show: bool = False,
     ):
         """
         Initializes the visualizer with BigQuery credentials and table info.
@@ -40,6 +41,7 @@ class BigQueryVisualizer:
             max_result_bytes (int): Abort if ``EXPLAIN`` estimates results larger than this many bytes.
             cache_threshold_bytes (int): Only cache DataFrames smaller than this size.
             sample_cache_dir (str): Directory to persist representative samples.
+            auto_show (bool): Automatically display generated figures. Defaults to ``False``.
         """
         self.project_id = project_id
         self.table_id = table_id
@@ -52,6 +54,7 @@ class BigQueryVisualizer:
         self.rep_sample_columns_key: str | None = None
         self.sample_cache_dir = Path(sample_cache_dir)
         self.sample_cache_dir.mkdir(parents=True, exist_ok=True)
+        self.auto_show = auto_show
         
         if credentials_path:
             self.credentials = service_account.Credentials.from_service_account_file(credentials_path)
@@ -428,7 +431,8 @@ class BigQueryVisualizer:
                     density = density * 100
                 fig.add_scatter(x=kde_x, y=density, mode='lines', name='KDE')
 
-        fig.show()
+        if self.auto_show:
+            fig.show()
         return hist_df, fig
 
     def pair_plot(
@@ -463,7 +467,8 @@ class BigQueryVisualizer:
         )
         fig.update_traces(diagonal_visible=False, showupperhalf=False)
         fig.update_layout(margin=dict(l=0, r=0, t=40, b=0))
-        fig.show()
+        if self.auto_show:
+            fig.show()
         return df, fig
 
     def numeric_correlations(
@@ -717,7 +722,8 @@ class BigQueryVisualizer:
             )
 
         fig.update_layout(margin=dict(l=0, r=0, t=40, b=0))
-        fig.show()
+        if self.auto_show:
+            fig.show()
         return df, fig
     
     def plot_scatter_chart(
@@ -855,7 +861,8 @@ class BigQueryVisualizer:
             legend_title_text=color_dimension or dimension,
         )
 
-        fig.show()
+        if self.auto_show:
+            fig.show()
         return df, fig
 
     def plot_sunburst(self, dimensions: list, filter: str = None):
@@ -895,7 +902,8 @@ class BigQueryVisualizer:
             height=800,
             margin=dict(t=60, l=0, r=0, b=0)
         )
-        fig.show()
+        if self.auto_show:
+            fig.show()
 
         return df, fig
 
@@ -1000,7 +1008,8 @@ class BigQueryVisualizer:
                     + (f" by {category_dimension}" if category_dimension else ""))
 
         plt.tight_layout()
-        plt.show()
+        if self.auto_show:
+            plt.show()
 
         return df, ax
     
@@ -1105,7 +1114,8 @@ class BigQueryVisualizer:
         ax.set_title(title)
 
         plt.tight_layout()
-        plt.show()
+        if self.auto_show:
+            plt.show()
 
         return df, ax
     
@@ -1193,7 +1203,8 @@ class BigQueryVisualizer:
 
         fig.update_traces(textposition="inside", textinfo="percent+label")
         fig.update_layout(margin=dict(l=0, r=0, t=40, b=0))
-        fig.show()
+        if self.auto_show:
+            fig.show()
 
         return df, fig
     
@@ -1716,7 +1727,8 @@ class BigQueryVisualizer:
         fig = px.scatter(df, x="dim1", y="dim2", opacity=0.4,
                          title=f"{method.upper()} projection (2D)")
         fig.update_layout(margin=dict(l=0, r=0, t=40, b=0))
-        fig.show()
+        if self.auto_show:
+            fig.show()
         return df, fig
 
     def partial_dependence(
@@ -1750,7 +1762,8 @@ class BigQueryVisualizer:
         fig = px.line(df, x="bin_id", y="avg_target",
                       markers=True, title=f"Partial dependence of {target} on {feature}")
         fig.update_layout(margin=dict(l=0, r=0, t=40, b=0))
-        fig.show()
+        if self.auto_show:
+            fig.show()
         return df, fig
 
     @staticmethod

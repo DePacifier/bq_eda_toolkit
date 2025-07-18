@@ -29,6 +29,7 @@ class DummyViz(BigQueryVisualizer):
         self.rep_sample_columns_key = None
         self.rep_sample_df = None
         self._calls = 0
+        self.auto_show = False
     def _execute_query(self, q, use_cache=True):
         self.last_query = q
         self._calls += 1

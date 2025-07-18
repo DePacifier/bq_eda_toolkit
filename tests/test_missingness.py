@@ -11,6 +11,7 @@ class DummyViz(BigQueryVisualizer):
         self.numeric_columns = []
         self._df = df
         self.rep_sample_df = df.copy()
+        self.auto_show = False
     def _execute_query(self, q, use_cache=True):
         return self._df.copy()
 

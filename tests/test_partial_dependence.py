@@ -11,6 +11,7 @@ class DummyViz(BigQueryVisualizer):
         self.numeric_columns = ['feat']
         self.categorical_columns = []
         self._df = df
+        self.auto_show = False
     def _execute_query(self, q, use_cache=True):
         if 'GROUP BY bin_id' in q:
             return pd.DataFrame({'bin_id':[0,1],'avg_target':[15,45],'n':[3,2]})
