@@ -9,9 +9,6 @@ import hashlib
 import numpy as np
 from scipy.stats import ks_2samp, chi2_contingency, gaussian_kde
 from sklearn.model_selection import train_test_split
-from sklearn.decomposition import PCA
-from sklearn.manifold import TSNE
-from umap import UMAP
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 from sklearn.neighbors import NearestNeighbors
@@ -359,79 +356,80 @@ class BigQueryVisualizer:
         """
         print("📊 Generating histogram…")
 
-        # ───────────────── 1. build query ───────────────────────────
-        select_cols = [numeric_column]
-        if color_dimension:
-            select_cols.insert(0, color_dimension)
-
         where_sql = self._build_where_clause(filter)
         if remove_nulls:
-            null_conds = [f"{numeric_column} IS NOT NULL"]
+            nulls = [f"{numeric_column} IS NOT NULL"]
             if color_dimension:
-                null_conds.append(f"{color_dimension} IS NOT NULL")
-            where_sql = f"{where_sql + ' AND ' if where_sql else 'WHERE '}{' AND '.join(null_conds)}"
+                nulls.append(f"{color_dimension} IS NOT NULL")
+            where_sql = self._merge_where(where_sql, " AND ".join(nulls))
 
+        bins = bins or 30
         query = f"""
-            SELECT {', '.join(select_cols)}
-            FROM {self.full_table_path}
-            {where_sql}
-            {f'LIMIT {limit}' if limit else ''}
+            WITH edges AS (
+                SELECT APPROX_QUANTILES({numeric_column}, {bins + 1}) AS qs
+                FROM {self.full_table_path}
+                {where_sql}
+            ),
+            bucketed AS (
+                SELECT WIDTH_BUCKET({numeric_column}, qs) AS bucket
+                       {(',' + color_dimension) if color_dimension else ''}
+                FROM {self.full_table_path}, edges
+                {where_sql}
+            )
+            SELECT
+              bucket
+              {(',' + color_dimension) if color_dimension else ''},
+              qs[OFFSET(bucket - 1)] AS bin_start,
+              qs[OFFSET(bucket)] AS bin_end,
+              COUNT(*) AS n
+            FROM bucketed, edges
+            WHERE bucket BETWEEN 1 AND {bins}
+            GROUP BY bucket{(',' + color_dimension) if color_dimension else ''}
+            ORDER BY bucket
         """
 
-        df = self._execute_query(query)
-        if df.empty:
+        hist_df = self._execute_query(query)
+        if hist_df.empty:
             print("Query returned no data.")
             return pd.DataFrame(), None
 
-        # ───────────────── 2. log-transform if needed ───────────────
-        plot_col = numeric_column
-        if log_x:
-            if (df[numeric_column] <= 0).any():
-                # shift so log is defined
-                offset = df[numeric_column][df[numeric_column] > 0].min() / 10
-                df["_log_value"] = np.log10(df[numeric_column] + offset)
-            else:
-                df["_log_value"] = np.log10(df[numeric_column])
-            plot_col = "_log_value"
+        total = hist_df['n'].sum()
+        y = hist_df['n']
+        if histnorm == 'percent':
+            y = y / total * 100
+        elif histnorm == 'probability':
+            y = y / total
+        elif histnorm == 'density':
+            y = y / total / (hist_df['bin_end'] - hist_df['bin_start'])
+        if cumulative:
+            y = y.cumsum()
+        hist_df['value'] = y
 
-        # ───────────────── 3. Plotly histogram ──────────────────────
-        fig = px.histogram(
-            data_frame=df,
-            x=plot_col,
-            color=color_dimension,
-            nbins=bins,
-            histnorm=histnorm,
-            cumulative=cumulative,
-            log_x=log_x,
-            color_discrete_sequence=px.colors.qualitative.Set3,
-            title=title or f"Distribution of {numeric_column}"
-                + (f" by {color_dimension}" if color_dimension else ""),
-            height=500,
-        )
+        fig = px.bar(hist_df, x='bin_start', y='value', color=color_dimension,
+                      title=title or f"Distribution of {numeric_column}"
+                      + (f" by {color_dimension}" if color_dimension else ""))
+        if log_x:
+            fig.update_layout(xaxis_type='log')
+        ylabel = {'percent':'Percent','probability':'Probability','density':'Density'}.get(histnorm,'Count')
+        fig.update_layout(margin=dict(l=0,r=0,t=40,b=0), yaxis_title=ylabel)
 
         if kde:
-            values = df[plot_col].dropna().to_numpy()
-            if len(values) > 1:
-                kde_x = np.linspace(values.min(), values.max(), 200)
-                density = gaussian_kde(values)(kde_x)
+            sample_df = self.get_representative_sample(columns=[numeric_column])
+            vals = sample_df[numeric_column].dropna().to_numpy()
+            if log_x:
+                vals = np.log10(vals[vals>0])
+            if len(vals) > 1:
+                kde_x = np.linspace(vals.min(), vals.max(), 200)
+                density = gaussian_kde(vals)(kde_x)
                 if histnorm is None:
-                    bin_w = (values.max() - values.min()) / (bins or 30)
-                    density = density * len(values) * bin_w
-                elif histnorm == "percent":
+                    bin_w = kde_x[1]-kde_x[0]
+                    density = density * len(vals) * bin_w
+                elif histnorm == 'percent':
                     density = density * 100
-                fig.add_scatter(x=kde_x, y=density, mode="lines", name="KDE")
+                fig.add_scatter(x=kde_x, y=density, mode='lines', name='KDE')
 
-        fig.update_layout(
-            xaxis_title=f"{numeric_column} (log10)" if log_x else numeric_column,
-            yaxis_title={"percent": "Percent",
-                        "probability": "Probability",
-                        "density": "Density"}.get(histnorm, "Count"),
-            margin=dict(l=0, r=0, t=40, b=0),
-            legend_title_text=color_dimension,
-        )
         fig.show()
-
-        return df, fig
+        return hist_df, fig
 
     def pair_plot(
         self,
@@ -467,6 +465,47 @@ class BigQueryVisualizer:
         fig.update_layout(margin=dict(l=0, r=0, t=40, b=0))
         fig.show()
         return df, fig
+
+    def numeric_correlations(
+        self,
+        columns: list[str],
+        method: str = "pearson",
+    ) -> pd.DataFrame:
+        """Return correlation matrix computed in BigQuery."""
+
+        if len(columns) < 2:
+            return pd.DataFrame()
+
+        queries = []
+        for i, c1 in enumerate(columns):
+            for c2 in columns[i + 1 :]:
+                if method.lower() == "pearson":
+                    expr = f"CORR({c1}, {c2})"
+                    q = f"SELECT '{c1}' AS c1, '{c2}' AS c2, {expr} AS corr FROM {self.full_table_path}"
+                else:
+                    q = f"""
+                        SELECT '{c1}' AS c1, '{c2}' AS c2,
+                               CORR(r1, r2) AS corr
+                        FROM (
+                            SELECT
+                                RANK() OVER(ORDER BY {c1}) AS r1,
+                                RANK() OVER(ORDER BY {c2}) AS r2
+                            FROM {self.full_table_path}
+                            WHERE {c1} IS NOT NULL AND {c2} IS NOT NULL
+                        )
+                    """
+                queries.append(q)
+
+        query = " UNION ALL ".join(queries)
+        df = self._execute_query(query)
+        if df.empty:
+            return pd.DataFrame()
+
+        mat = pd.DataFrame(np.eye(len(columns)), index=columns, columns=columns)
+        for _, r in df.iterrows():
+            mat.loc[r["c1"], r["c2"]] = r["corr"]
+            mat.loc[r["c2"], r["c1"]] = r["corr"]
+        return mat
     
     def plot_categorical_chart(
         self,
@@ -1648,34 +1687,38 @@ class BigQueryVisualizer:
         columns: list[str],
         sample_rows: int = 10000,
     ) -> tuple[pd.DataFrame, px.scatter] | tuple[pd.DataFrame, None]:
-        """Return a 2-D projection of ``columns`` using PCA/t-SNE/UMAP."""
+        """Return a 2-D projection of ``columns`` using BigQuery ML."""
 
-        df = self.get_representative_sample(columns=columns)
-        if df.empty:
-            return pd.DataFrame(), None
-        df = df[columns].dropna()
-        if len(df) > sample_rows:
-            df = df.sample(sample_rows, random_state=42)
-        if df.empty:
-            return pd.DataFrame(), None
-
-        X = df[columns].values
-        if method.lower() == "pca":
-            coords = PCA(n_components=2).fit_transform(X)
-        elif method.lower() == "tsne":
-            perplex = max(2, min(30, X.shape[0] // 2))
-            coords = TSNE(n_components=2, perplexity=perplex, random_state=42).fit_transform(X)
-        elif method.lower() == "umap":
-            coords = UMAP(n_components=2, random_state=42).fit_transform(X)
-        else:
+        algo = method.lower()
+        tvf = {
+            "pca": "ML.PCA",
+            "tsne": "ML.TSNE",
+            "umap": "ML.UMAP",
+        }.get(algo)
+        if tvf is None:
             raise ValueError("method must be 'pca', 'tsne', or 'umap'")
 
-        proj_df = pd.DataFrame(coords, columns=["dim1", "dim2"])
-        fig = px.scatter(proj_df, x="dim1", y="dim2", opacity=0.4,
+        col_sql = ", ".join(columns)
+        not_null = " AND ".join(f"{c} IS NOT NULL" for c in columns)
+        query = f"""
+            SELECT
+              principal_component_1 AS dim1,
+              principal_component_2 AS dim2
+            FROM {tvf}(
+              (SELECT {col_sql} FROM {self.full_table_path} WHERE {not_null}),
+              STRUCT(2 AS num_principal_components)
+            )
+        """
+
+        df = self._execute_query(query)
+        if df.empty:
+            return pd.DataFrame(), None
+
+        fig = px.scatter(df, x="dim1", y="dim2", opacity=0.4,
                          title=f"{method.upper()} projection (2D)")
         fig.update_layout(margin=dict(l=0, r=0, t=40, b=0))
         fig.show()
-        return proj_df, fig
+        return df, fig
 
     def partial_dependence(
         self,

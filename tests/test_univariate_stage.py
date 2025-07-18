@@ -23,11 +23,20 @@ class DummyViz(BigQueryVisualizer):
                 'total_rows':[4],'null_count':[0],'non_null_count':[4],
                 'mean':[25],'std_dev':[11.2],'variance':[125.0],'min':[10],'max':[40],
                 'skewness':[0.0],'kurtosis':[1.5],'quartiles':[[10,17.5,25,32.5,40]]})
-        if 'SELECT num1' in q:
-            return pd.DataFrame({'num1':[1,2,3,4]})
-        if 'SELECT num2' in q:
-            return pd.DataFrame({'num2':[10,20,30,40]})
+        if 'APPROX_QUANTILES' in q:
+            return pd.DataFrame({
+                'bucket':[1,2],
+                'bin_start':[0,5],
+                'bin_end':[5,10],
+                'n':[2,2]
+            })
         return pd.DataFrame()
+
+    def get_representative_sample(self, columns=None, max_bytes=None, refresh=False):
+        df = pd.DataFrame({'num1':[1,2,3,4], 'num2':[10,20,30,40]})
+        if columns:
+            df = df[columns]
+        return df
 
 
 def test_univariate_stage_kde_histograms():

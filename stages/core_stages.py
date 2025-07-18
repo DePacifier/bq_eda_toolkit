@@ -232,25 +232,25 @@ class BivariateStage(BaseStage):
 
         # ─── Numeric correlations ──────────────────────────────────────
         if num_cols:
-            df = viz.get_representative_sample(columns=num_cols)
-            if len(df) > sample_n:
-                df = df.sample(sample_n, random_state=42)
-            if not df.empty:
-                pear = df.corr(method="pearson")
+            pear = viz.numeric_correlations(num_cols, method="pearson")
+            if not pear.empty:
                 ctx.add_table(self.key("pearson_corr"), pear)
                 fig = px.imshow(pear, title="Numeric Correlation Matrix", color_continuous_scale="RdBu_r")
                 ctx.add_figure(self.key("corr_heatmap"), fig)
 
-                spear = df.corr(method="spearman")
+            spear = viz.numeric_correlations(num_cols, method="spearman")
+            if not spear.empty:
                 ctx.add_table(self.key("spearman_corr"), spear)
 
-                if ctx.params.get("lowess_plots"):
-                    from itertools import combinations
-
-                    for x, y in combinations(num_cols[:5], 2):
-                        fig = px.scatter(df, x=x, y=y, trendline="lowess",
-                                         title=f"{y} vs {x} (LOWESS)")
-                        ctx.add_figure(self.key(f"{y}_vs_{x}.lowess"), fig)
+            if ctx.params.get("lowess_plots"):
+                from itertools import combinations
+                df = viz.get_representative_sample(columns=num_cols[:5])
+                for x, y in combinations(num_cols[:5], 2):
+                    if df.empty:
+                        break
+                    fig = px.scatter(df, x=x, y=y, trendline="lowess",
+                                     title=f"{y} vs {x} (LOWESS)")
+                    ctx.add_figure(self.key(f"{y}_vs_{x}.lowess"), fig)
 
         # ─── Numeric ~ Categorical tests ───────────────────────────────
         numcat_results = []
