@@ -19,7 +19,15 @@ class BigQueryVisualizer:
     An enhanced class to connect to a BigQuery table and generate visualizations
     and descriptive analyses directly in a Python notebook.
     """
-    def __init__(self, project_id: str, table_id: str, credentials_path: str = None, max_bytes_scanned: int = 10_000_000_000):
+    def __init__(
+        self,
+        project_id: str,
+        table_id: str,
+        credentials_path: str = None,
+        max_bytes_scanned: int = 10_000_000_000,
+        max_result_bytes: int = 2_000_000_000,
+        cache_threshold_bytes: int = 100_000_000,
+    ):
         """
         Initializes the visualizer with BigQuery credentials and table info.
 
@@ -28,12 +36,17 @@ class BigQueryVisualizer:
             table_id (str): The full ID of the BigQuery table (e.g., 'your_dataset.your_table_name').
             credentials_path (str, optional): Path to your GCP service account JSON file.
                                               If None, relies on default authentication.
+            max_bytes_scanned (int): Abort if a dry run estimates scanning more than this many bytes.
+            max_result_bytes (int): Abort if ``EXPLAIN`` estimates results larger than this many bytes.
+            cache_threshold_bytes (int): Only cache DataFrames smaller than this size.
         """
         self.project_id = project_id
         self.table_id = table_id
         self.full_table_path = f"`{self.project_id}.{self.table_id}`"
         self._query_cache: dict[str, pd.DataFrame] = {}
         self.max_bytes_scanned = max_bytes_scanned
+        self.max_result_bytes = max_result_bytes
+        self.cache_threshold_bytes = cache_threshold_bytes
         
         if credentials_path:
             self.credentials = service_account.Credentials.from_service_account_file(credentials_path)
@@ -121,13 +134,32 @@ class BigQueryVisualizer:
                 f"Query would process {dry_job.total_bytes_processed/1e9:.2f} GB "
                 f"(limit {self.max_bytes_scanned/1e9:.2f} GB). Aborting."
             )
-        
+
+        # Estimate result size before executing
+        est_bytes = 0
+        try:
+            plan_job = self.client.query(f"EXPLAIN {query}")
+            plan_job.result()
+            if plan_job.query_plan:
+                final = plan_job.query_plan[-1]
+                est_bytes = int(
+                    final._properties.get("statistics", {}).get("estimatedBytes", 0)
+                )
+        except Exception:
+            est_bytes = 0
+
+        if est_bytes and est_bytes > self.max_result_bytes:
+            raise RuntimeError(
+                f"Query would return {est_bytes/1e9:.2f} GB "
+                f"(limit {self.max_result_bytes/1e9:.2f} GB). Aborting."
+            )
+
         print(f"ℹ️ Query will process {dry_job.total_bytes_processed/1e9:.2f} GB")
-    
+
         try:
             query_job = self.client.query(query)
             df = query_job.to_dataframe()
-            if use_cache:
+            if use_cache and df.memory_usage(deep=True).sum() < self.cache_threshold_bytes:
                 self._query_cache[query] = df.copy()
             return df
         except Exception as e:

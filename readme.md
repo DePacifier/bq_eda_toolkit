@@ -5,7 +5,7 @@
 * Plotly-powered charts  
 * SQL-first, Python-light: heavy lifting stays in BigQuery  
 * Modular pipeline (run everything) **and** standalone helpers  
-* Built-in query cache + cost guard (no surprise bills)
+* Built-in query cache + cost guard (dry-run + result-size check)
 
 ---
 
@@ -17,8 +17,8 @@
 | `stages/` | Each `Stage` runs one slice of EDA (profiling, quality, univariate, …) and writes artefacts into a shared `AnalysisContext`. |
 | `pipeline.py` | Orchestrator that executes any list of stages: `Pipeline().run(viz)`. |
 | `analysis_context.py` | In-memory store for result tables & figures—later export to HTML / Markdown. |
-| cost guard | Dry-run every query; abort if bytes scanned > configurable limit (default 1 GB). |
-| cache | In-memory DataFrame cache per notebook session—re-plots are instant, no extra BigQuery cost. |
+| cost guard | Dry-run every query; abort if bytes scanned > configurable limit (default 1 GB) and if `EXPLAIN` estimates the result exceeds `max_result_bytes` (default 2 GB). |
+| cache | DataFrames are cached per session only when their memory usage is below `cache_threshold_bytes` (default 100 MB). |
 | `feature_advice.py` | Auto-suggest encoding, scaling and interaction plans based on profiling results. |
 
 ---
@@ -41,6 +41,9 @@ viz = BigQueryVisualizer(
     project_id="my-project",
     table_id="dataset.table",
     credentials_path="path/to/key.json",
+    # optional guards:
+    # max_result_bytes=2_000_000_000,
+    # cache_threshold_bytes=100_000_000,
 )
 
 # prints: e.g. "ℹ️ 100000 rows · 2.5 GB"
