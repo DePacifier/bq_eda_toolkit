@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 from bq_eda_toolkit.bigquery_visualizer import BigQueryVisualizer, QueryExecutionError
+from bq_eda_toolkit.utils.bq_executor import execute_query_with_guard
 
 class FakePlanEntry:
     def __init__(self, est):
