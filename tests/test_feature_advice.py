@@ -13,10 +13,18 @@ class DummyViz:
         self.categorical_columns = ['cat']
         self.datetime_columns = ['date']
         self.columns = self.numeric_columns + self.categorical_columns + self.datetime_columns
+        self.queries = []
 
+    def _execute_query(self, q, use_cache=True):
+        self.queries.append(q)
+        if 'ML.EVALUATE' in q:
+            return pd.DataFrame({'metric':['mae'], 'value':[1.0]})
+        if 'ML.WEIGHTS' in q:
+            return pd.DataFrame({'processed_input':['num1'], 'weight':[0.5]})
+        return pd.DataFrame()
 
 def _ctx_with_metrics():
-    ctx = AnalysisContext()
+    ctx = AnalysisContext(params={'target_column':'num1'})
     ctx.add_table(
         'quality.missing_pct',
         pd.DataFrame({'column':['num1','num2','cat','date'], 'missing_pct':[10,0,5,60]})
@@ -52,3 +60,17 @@ def test_feature_advice_outputs():
     assert imp.loc[imp['column']=='num1','strategy'].iloc[0] == 'median'
     assert scale.loc[scale['column']=='num2','scaling'].iloc[0] == 'standard'
     assert not inter.empty
+
+
+def test_feature_advice_bqml_queries_and_storage():
+    ctx = _ctx_with_metrics()
+    viz = DummyViz()
+    FeatureAdviceStage().run(viz, ctx)
+
+    all_q = "\n".join(viz.queries)
+    assert 'CREATE OR REPLACE TEMP MODEL' in all_q
+    assert 'ML.EVALUATE' in all_q
+    assert 'ML.WEIGHTS' in all_q
+
+    assert ctx.get_table('feature_advice.model_metrics') is not None
+    assert ctx.get_table('feature_advice.model_weights') is not None

@@ -1751,33 +1751,38 @@ class BigQueryVisualizer:
         target: str,
         bins: int = 10,
     ) -> tuple[pd.DataFrame, px.line] | tuple[pd.DataFrame, None]:
-        """Compute simple 1-D partial dependence via BigQuery aggregation."""
+        """Compute simple 1‑D partial dependence using a representative sample."""
 
-        query = f"""
-            WITH stats AS (
-                SELECT MIN({feature}) AS min_val, MAX({feature}) AS max_val
-                FROM {self.full_table_path}
-            )
-            SELECT
-              CAST(({feature} - stats.min_val) /
-                   NULLIF(stats.max_val - stats.min_val,0) * {bins} AS INT64) AS bin_id,
-              AVG({target}) AS avg_target,
-              COUNT(*) AS n
-            FROM {self.full_table_path}, stats
-            WHERE {feature} IS NOT NULL AND {target} IS NOT NULL
-            GROUP BY bin_id
-            ORDER BY bin_id
-        """
-        df = self._execute_query(query)
+        df = self.get_representative_sample(columns=[feature, target])
         if df.empty:
             return pd.DataFrame(), None
 
-        fig = px.line(df, x="bin_id", y="avg_target",
-                      markers=True, title=f"Partial dependence of {target} on {feature}")
+        df = df[[feature, target]].dropna()
+        if df.empty:
+            return pd.DataFrame(), None
+
+        edges = np.linspace(df[feature].min(), df[feature].max(), bins + 1)
+        bin_ids = pd.cut(
+            df[feature], bins=edges, labels=False, include_lowest=True, duplicates="drop"
+        )
+        tbl = (
+            df.assign(bin_id=bin_ids)
+            .groupby("bin_id")[target]
+            .agg(avg_target="mean", n="size")
+            .reset_index()
+        )
+
+        fig = px.line(
+            tbl,
+            x="bin_id",
+            y="avg_target",
+            markers=True,
+            title=f"Partial dependence of {target} on {feature}",
+        )
         fig.update_layout(margin=dict(l=0, r=0, t=40, b=0))
         if self.auto_show:
             fig.show()
-        return df, fig
+        return tbl, fig
 
     @staticmethod
     def hopkins_statistic(X: np.ndarray, n_samples: int | None = None) -> float:
