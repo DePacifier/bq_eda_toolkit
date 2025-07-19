@@ -5,14 +5,106 @@ import plotly.express as px
 from scipy.stats import chi2_contingency, ttest_ind, f_oneway
 from scipy.stats import spearmanr
 import numpy as np
+from typing import TYPE_CHECKING
 from .base import BaseStage
 from ..analysis_context import AnalysisContext
-from ..bigquery_visualizer import BigQueryVisualizer
+if TYPE_CHECKING:
+    from ..bigquery_visualizer import BigQueryVisualizer
 
 from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 from sklearn.decomposition import PCA
 from sklearn.ensemble import IsolationForest
+
+
+# ────────────────────────────────────────────────
+# Representative Sampling Stage
+# ────────────────────────────────────────────────
+class RepSampleStage(BaseStage):
+    """Return a small, representative subset of the table."""
+
+    id = "rep_sample"
+
+    def __init__(
+        self,
+        *,
+        n: int | None = None,
+        sample_percent: float | None = None,
+        method: str = "TABLESAMPLE",
+        stratify_by: str | None = None,
+        columns: list[str] | None = None,
+    ) -> None:
+        self.n = n
+        self.sample_percent = sample_percent
+        self.method = method.upper()
+        self.stratify_by = stratify_by
+        self.columns = columns
+
+    # rough byte sizes per column type
+    _SIZE_MAP = {
+        "numeric": 8,
+        "string": 20,
+        "boolean": 1,
+        "datetime": 8,
+        "complex": 50,
+        "geographic": 16,
+        "other": 8,
+    }
+
+    def _row_bytes(self, viz: BigQueryVisualizer) -> int:
+        cols = self.columns or viz.columns
+        cat_lookup = dict(zip(viz.schema_df["column_name"], viz.schema_df["category"]))
+        row_bytes = sum(self._SIZE_MAP.get(cat_lookup.get(c, "other"), 8) for c in cols)
+        return max(1, row_bytes)
+
+    def _estimate_n(self, viz: BigQueryVisualizer) -> int:
+        if self.n is not None:
+            return int(self.n)
+        limit_bytes = getattr(viz, "max_result_bytes", 0) or 0
+        n = limit_bytes // self._row_bytes(viz)
+        return max(1, int(n))
+
+    def _derive_percent(self, viz: BigQueryVisualizer, n: int) -> float:
+        if self.sample_percent is not None:
+            return float(self.sample_percent)
+        if getattr(viz, "table_rows", None):
+            pct = n / viz.table_rows * 100
+            return pct
+        return 1.0
+
+    def build_query(self, viz: BigQueryVisualizer) -> str:
+        cols = self.columns or viz.columns
+        col_sql = ", ".join(cols)
+        n = self._estimate_n(viz)
+        pct = self._derive_percent(viz, n)
+        pct_str = f"{pct:g}"
+        if self.method == "STRATIFIED":
+            if not self.stratify_by:
+                raise ValueError("stratify_by required for STRATIFIED sampling")
+            return (
+                f"WITH base AS (\n"
+                f"  SELECT {col_sql},\n"
+                f"         ROW_NUMBER() OVER(PARTITION BY {self.stratify_by} ORDER BY RAND()) AS rn,\n"
+                f"         COUNT(*) OVER(PARTITION BY {self.stratify_by}) AS cnt\n"
+                f"  FROM {viz.full_table_path}\n"
+                f")\n"
+                f"SELECT {col_sql}\n"
+                f"FROM base\n"
+                f"WHERE rn <= CEIL(cnt * {pct_str} / 100)\n"
+                f"LIMIT {n}"
+            )
+        # default TABLESAMPLE
+        return (
+            f"SELECT {col_sql} FROM {viz.full_table_path} "
+            f"TABLESAMPLE SYSTEM ({pct_str} PERCENT) "
+            f"LIMIT {n}"
+        )
+
+    def run(self, viz: BigQueryVisualizer, ctx: AnalysisContext) -> pd.DataFrame:
+        q = self.build_query(viz)
+        df = viz._execute_query(q)
+        ctx.add_table(self.key("sample"), df)
+        return df
 
 
 # ────────────────────────────────────────────────
@@ -367,8 +459,8 @@ class MultivariateStage(BaseStage):
             ctx.add_figure(self.key("umap_scatter"), umap_fig)
 
         # ─── Clustering potential metrics ───────────────────────────
-        hopkins = BigQueryVisualizer.hopkins_statistic(X)
-        sil = BigQueryVisualizer.silhouette_score_estimate(X)
+        hopkins = viz.hopkins_statistic(X)
+        sil = viz.silhouette_score_estimate(X)
         ctx.add_table(self.key("cluster_potential"),
                       pd.DataFrame({"hopkins_stat": [hopkins], "silhouette_score": [sil]}))
 

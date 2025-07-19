@@ -20,6 +20,7 @@
 | cost guard | Dry-run every query; abort if bytes scanned > configurable limit (default 1 GB) and if `EXPLAIN` estimates the result exceeds `max_result_bytes` (default 2 GB). |
 | cache | DataFrames are cached per session only when their memory usage is below `cache_threshold_bytes` (default 100 MB). |
 | `feature_advice.py` | Auto-suggest encoding, scaling and interaction plans based on profiling results. |
+| `RepSampleStage` | Build representative samples via `TABLESAMPLE` or stratified sampling. |
 
 ---
 
