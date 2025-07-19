@@ -13,9 +13,10 @@ class DummyViz(BigQueryVisualizer):
         self.categorical_columns = []
         self._df = df
         self.auto_show = False
-    def _execute_query(self, q, use_cache=True):
-        if 'GROUP BY bin_id' in q:
-            return pd.DataFrame({'bin_id':[0,1],'avg_target':[15,45],'n':[3,2]})
+
+    def get_representative_sample(self, columns=None, max_bytes=None, refresh=False):
+        if columns:
+            return self._df[columns].copy()
         return self._df.copy()
 
 
@@ -23,5 +24,6 @@ def test_partial_dependence():
     df = pd.DataFrame({'feat':[1,2,3,4,5], 'target':[10,20,30,40,50]})
     viz = DummyViz(df)
     tbl, fig = viz.partial_dependence(feature='feat', target='target', bins=2)
-    assert not tbl.empty
+    assert list(tbl.columns) == ['bin_id', 'avg_target', 'n']
+    assert tbl['n'].sum() == len(df)
     assert fig is not None

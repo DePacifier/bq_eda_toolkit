@@ -13,13 +13,13 @@
 
 | module | highlight |
 |--------|-----------|
-| `bigquery_visualizer.py` | 1-line connection ➜ 20+ plotting / analysis helpers (bar, scatter, histogram, violin, pie, sunburst, descriptive stats …) |
+| `bigquery_visualizer.py` | 1-line connection ➜ 20+ plotting / analysis helpers (bar, scatter, histogram, violin, pie, sunburst, descriptive stats, sample-based partial dependence …) |
 | `stages/` | Each `Stage` runs one slice of EDA (profiling, quality, univariate, …) and writes artefacts into a shared `AnalysisContext`. |
 | `pipeline.py` | Orchestrator that executes any list of stages: `Pipeline().run(viz)`. |
 | `analysis_context.py` | In-memory store for result tables & figures—later export to HTML / Markdown. |
 | cost guard | Dry-run every query; abort if bytes scanned > configurable limit (default 1 GB) and if `EXPLAIN` estimates the result exceeds `max_result_bytes` (default 2 GB). |
 | cache | DataFrames are cached per session only when their memory usage is below `cache_threshold_bytes` (default 100 MB). |
-| `feature_advice.py` | Auto-suggest encoding, scaling and interaction plans based on profiling results. |
+| `feature_advice.py` | Auto-suggest encoding, scaling and interaction plans and trains a quick BQML linear regression for diagnostics. |
 | `RepSampleStage` | Build representative samples via `TABLESAMPLE` or stratified sampling. |
 
 ---
@@ -96,6 +96,7 @@ The `FeatureAdviceStage` consumes earlier statistics to auto‑generate
 encoding, imputation and scaling suggestions, plus a list of possible
 interaction terms. These tables can guide feature engineering for a
 machine learning model.
+Running this stage requires the BigQuery ML API to be enabled.
 
 ## 🛠️ Configuration
 

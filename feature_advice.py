@@ -80,3 +80,26 @@ class FeatureAdviceStage(BaseStage):
         ctx.add_table(self.key("imputation_plan"), pd.DataFrame(imp_rows))
         ctx.add_table(self.key("scaling_plan"), pd.DataFrame(scale_rows))
         ctx.add_table(self.key("interaction_plan"), pd.DataFrame(inter_rows))
+
+        # ─── quick linear regression diagnostics via BQML ─────────────
+        target = ctx.params.get("target_column")
+        if target and target in viz.columns:
+            feature_cols = [c for c in viz.numeric_columns if c != target]
+            if feature_cols:
+                col_sql = ", ".join([target] + feature_cols)
+                create_q = f"""
+                    CREATE OR REPLACE TEMP MODEL feature_advice_temp
+                    OPTIONS(model_type='LINEAR_REG', input_label_cols=['{target}']) AS
+                    SELECT {col_sql} FROM {viz.full_table_path}
+                    WHERE {target} IS NOT NULL
+                """
+                viz._execute_query(create_q, use_cache=False)
+
+                eval_q = "SELECT * FROM ML.EVALUATE(MODEL feature_advice_temp)"
+                metrics = viz._execute_query(eval_q, use_cache=False)
+                ctx.add_table(self.key("model_metrics"), metrics)
+
+                weight_q = "SELECT * FROM ML.WEIGHTS(MODEL feature_advice_temp)"
+                weights = viz._execute_query(weight_q, use_cache=False)
+                ctx.add_table(self.key("model_weights"), weights)
+
