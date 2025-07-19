@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import plotly.express as px
 from google.cloud import bigquery
 from google.oauth2 import service_account
+from .utils.bq_executor import execute_query_with_guard
 from pathlib import Path
 import hashlib
 import numpy as np
@@ -149,41 +150,13 @@ class BigQueryVisualizer:
         if use_cache and query in self._query_cache:
             return self._query_cache[query].copy()
 
-        cfg = bigquery.QueryJobConfig(dry_run=True, use_query_cache=True)
-        dry_job = self.client.query(query, job_config=cfg)
-        if dry_job.total_bytes_processed > self.max_bytes_scanned:
-            raise RuntimeError(
-                f"Query would process {dry_job.total_bytes_processed/1e9:.2f} GB "
-                f"(limit {self.max_bytes_scanned/1e9:.2f} GB). Aborting."
-            )
-
-        # Estimate result size before executing
-        est_bytes = 0
         try:
-            plan_job = self.client.query(f"EXPLAIN {query}")
-            plan_job.result()
-            if plan_job.query_plan:
-                final = plan_job.query_plan[-1]
-                est_bytes = int(
-                    final._properties.get("statistics", {}).get("estimatedBytes", 0)
-                )
-        except Exception:
-            est_bytes = 0
-
-        if est_bytes and est_bytes > self.max_result_bytes:
-            raise RuntimeError(
-                f"Query would return {est_bytes/1e9:.2f} GB "
-                f"(limit {self.max_result_bytes/1e9:.2f} GB). Aborting."
+            df = execute_query_with_guard(
+                self.client,
+                query,
+                max_gb_processed=self.max_bytes_scanned / 1e9,
+                max_result_bytes=self.max_result_bytes,
             )
-
-        logger.info(
-            "ℹ️ Query will process %0.2f GB",
-            dry_job.total_bytes_processed / 1e9,
-        )
-
-        try:
-            query_job = self.client.query(query)
-            df = query_job.to_dataframe()
         except Exception as e:
             logger.error("An error occurred: %s", e)
             raise QueryExecutionError(str(e)) from e

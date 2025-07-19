@@ -65,6 +65,13 @@ splits, balance = viz.generate_splits(
     method="stratified",
 )
 print(balance)
+
+# run a custom query with guard logic only
+from bq_eda_toolkit.utils.bq_executor import execute_query_with_guard
+row_count_df = execute_query_with_guard(
+    viz.client,
+    "SELECT COUNT(*) AS n FROM dataset.table",
+)
 ```
 
 Visualisation functions return Plotly or Matplotlib objects. They do not call
