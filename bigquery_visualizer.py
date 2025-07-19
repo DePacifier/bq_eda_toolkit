@@ -14,6 +14,7 @@ from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 from sklearn.neighbors import NearestNeighbors
 import logging
+from .stages.core_stages import RepSampleStage
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -1502,25 +1503,24 @@ class BigQueryVisualizer:
         ):
             return self.rep_sample_df.copy()
 
-        limit_bytes = max_bytes or self.max_result_bytes
-        size_map = {
-            "numeric": 8,
-            "string": 20,
-            "boolean": 1,
-            "datetime": 8,
-            "complex": 50,
-            "geographic": 16,
-            "other": 8,
-        }
-        cat_lookup = dict(zip(self.schema_df["column_name"], self.schema_df["category"]))
-        row_bytes = sum(size_map.get(cat_lookup.get(c, "other"), 8) for c in cols)
-        row_bytes = max(1, row_bytes)
-        max_rows = max(1, limit_bytes // row_bytes)
+        n_override = None
+        if max_bytes is not None:
+            size_map = {
+                "numeric": 8,
+                "string": 20,
+                "boolean": 1,
+                "datetime": 8,
+                "complex": 50,
+                "geographic": 16,
+                "other": 8,
+            }
+            cat_lookup = dict(zip(self.schema_df["column_name"], self.schema_df["category"]))
+            row_bytes = sum(size_map.get(cat_lookup.get(c, "other"), 8) for c in cols)
+            row_bytes = max(1, row_bytes)
+            n_override = max(1, max_bytes // row_bytes)
 
-        query = (
-            f"SELECT {', '.join(cols)} FROM {self.full_table_path} TABLESAMPLE SYSTEM (1 PERCENT) "
-            f"LIMIT {max_rows}"
-        )
+        stage = RepSampleStage(n=n_override, columns=cols)
+        query = stage.build_query(self)
         df = self._execute_query(query)
         if not df.empty:
             self.evaluate_sample_bias(sample_rows=min(1000, len(df)))

@@ -1,8 +1,9 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, TYPE_CHECKING
 from ..analysis_context import AnalysisContext
-from ..bigquery_visualizer import BigQueryVisualizer   # adjust import path if needed
+if TYPE_CHECKING:  # avoid circular import at runtime
+    from ..bigquery_visualizer import BigQueryVisualizer
 
 
 class BaseStage(ABC):
