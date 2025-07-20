@@ -3,6 +3,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 
 import pandas as pd
+import polars as pl
 import seaborn as sns
 import matplotlib.pyplot as plt
 from bq_eda_toolkit.analysis_context import AnalysisContext
@@ -38,7 +39,7 @@ class DummyViz:
         df = self.rep_sample_df.copy()
         if columns:
             df = df[columns]
-        return df
+        return pl.from_pandas(df).lazy()
 
     def missingness_map(self, columns=None, sample_rows=100000):
         df = pd.DataFrame({'a':[1,2], 'num1':[1,2], 'cat1':['x','y']})

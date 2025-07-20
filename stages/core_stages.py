@@ -269,7 +269,11 @@ class QualityStage(BaseStage):
         # IsolationForest on numeric sample
         sample_n = int(ctx.params.get("sample_rows", 10000))
         if viz.numeric_columns:
-            sample_df = viz.get_representative_sample(columns=viz.numeric_columns)
+            sample_df = (
+                viz.get_representative_sample(columns=viz.numeric_columns)
+                .collect()
+                .to_pandas()
+            )
             if len(sample_df) > sample_n:
                 sample_df = sample_df.sample(sample_n, random_state=42)
             if not sample_df.empty:
@@ -336,7 +340,11 @@ class BivariateStage(BaseStage):
 
             if ctx.params.get("lowess_plots"):
                 from itertools import combinations
-                df = viz.get_representative_sample(columns=num_cols[:5])
+                df = (
+                    viz.get_representative_sample(columns=num_cols[:5])
+                    .collect()
+                    .to_pandas()
+                )
                 for x, y in combinations(num_cols[:5], 2):
                     if df.empty:
                         break
@@ -348,7 +356,11 @@ class BivariateStage(BaseStage):
         numcat_results = []
         for num in viz.numeric_columns:
             for cat in viz.categorical_columns:
-                df_pair = viz.get_representative_sample(columns=[cat, num]).dropna()
+                df_pair = (
+                    viz.get_representative_sample(columns=[cat, num])
+                    .collect()
+                    .to_pandas()
+                ).dropna()
                 if len(df_pair) > sample_n:
                     df_pair = df_pair.sample(sample_n, random_state=42)
                 if df_pair.empty:
@@ -423,7 +435,11 @@ class MultivariateStage(BaseStage):
 
         # pull sample
         sample_n = int(ctx.params.get("sample_rows", 100_000))
-        df = viz.get_representative_sample(columns=num_cols).dropna()
+        df = (
+            viz.get_representative_sample(columns=num_cols)
+            .collect()
+            .to_pandas()
+        ).dropna()
         if len(df) > sample_n:
             df = df.sample(sample_n, random_state=42)
         if df.empty:

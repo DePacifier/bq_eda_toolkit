@@ -3,6 +3,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 
 import pandas as pd
+import polars as pl
 from bq_eda_toolkit.bigquery_visualizer import BigQueryVisualizer
 
 class DummyViz(BigQueryVisualizer):
@@ -16,8 +17,8 @@ class DummyViz(BigQueryVisualizer):
 
     def get_representative_sample(self, columns=None, max_bytes=None, refresh=False):
         if columns:
-            return self._df[columns].copy()
-        return self._df.copy()
+            return pl.from_pandas(self._df[columns].copy()).lazy()
+        return pl.from_pandas(self._df.copy()).lazy()
 
 
 def test_partial_dependence():

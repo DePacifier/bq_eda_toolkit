@@ -3,6 +3,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 
 import pandas as pd
+import polars as pl
 from bq_eda_toolkit.analysis_context import AnalysisContext
 from bq_eda_toolkit.stages.core_stages import UnivariateStage
 from bq_eda_toolkit.bigquery_visualizer import BigQueryVisualizer
@@ -38,7 +39,7 @@ class DummyViz(BigQueryVisualizer):
         df = pd.DataFrame({'num1':[1,2,3,4], 'num2':[10,20,30,40]})
         if columns:
             df = df[columns]
-        return df
+        return pl.from_pandas(df).lazy()
 
 
 def test_univariate_stage_kde_histograms():
