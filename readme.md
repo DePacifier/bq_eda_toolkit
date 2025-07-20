@@ -98,6 +98,33 @@ interaction terms. These tables can guide feature engineering for a
 machine learning model.
 Running this stage requires the BigQuery ML API to be enabled.
 
+### Extending the pipeline
+
+The toolkit is modular: each `Stage` encapsulates one slice of the analysis and
+`Pipeline` simply runs them in sequence. You can plug in your own logic by
+subclassing `BaseStage` and adding the stage to the pipeline. Ad‑hoc SQL is
+supported via `execute_query_with_guard`, which powers `BigQueryVisualizer`'s
+internal query method and enforces the dry‑run and result‑size checks.
+
+```python
+from bq_eda_toolkit.stages.base import BaseStage
+from bq_eda_toolkit.utils.bq_executor import execute_query_with_guard
+
+class MyStage(BaseStage):
+    def run(self, viz, ctx):
+        df = execute_query_with_guard(
+            viz.client,
+            "SELECT COUNT(*) AS n FROM dataset.table",
+        )
+        ctx.add_table(self.key("row_count"), df)
+
+pipe = Pipeline(stages=[MyStage("custom")])
+ctx = pipe.run(viz)
+```
+
+Results are shared via the `AnalysisContext`, so custom stages can consume or
+produce tables just like the built‑in ones.
+
 ## 🛠️ Configuration
 
 BigQuery credentials can be supplied either via the `credentials_path` argument or by setting the `GOOGLE_APPLICATION_CREDENTIALS` environment variable. The visualizer also exposes query guard parameters:
