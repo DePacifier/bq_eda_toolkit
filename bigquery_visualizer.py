@@ -350,6 +350,7 @@ class BigQueryVisualizer:
         cumulative: bool = False,
         kde: bool = False,
         title: str | None = None,
+        show_pct: bool = True,
     ):
         """
         Quick numeric **histogram** with optional colour split.
@@ -378,6 +379,8 @@ class BigQueryVisualizer:
             Overlay a kernel density estimate.
         title : str | None
             Custom chart title.
+        show_pct : bool
+            Add share (%) to hover information.
 
         Returns
         -------
@@ -436,14 +439,29 @@ class BigQueryVisualizer:
         if cumulative:
             y = y.cumsum()
         hist_df['value'] = y
+        hist_df['pct'] = (hist_df['n'] / total * 100).round(2)
 
-        fig = px.bar(hist_df, x='bin_start', y='value', color=color_dimension,
-                      title=title or f"Distribution of {numeric_column}"
-                      + (f" by {color_dimension}" if color_dimension else ""))
+        fig = px.bar(
+            hist_df,
+            x='bin_start',
+            y='value',
+            color=color_dimension,
+            title=title or f"Distribution of {numeric_column}" + (
+                f" by {color_dimension}" if color_dimension else ""
+            ),
+        )
         if log_x:
             fig.update_layout(xaxis_type='log')
         ylabel = {'percent':'Percent','probability':'Probability','density':'Density'}.get(histnorm,'Count')
         fig.update_layout(margin=dict(l=0,r=0,t=40,b=0), yaxis_title=ylabel)
+
+        if show_pct:
+            fig.update_traces(
+                hovertemplate=(
+                    f"<b>%{{x}}</b><br>{ylabel}: %{{y}}<br>Share: %{{customdata}}%<extra></extra>"
+                ),
+                customdata=hist_df["pct"],
+            )
 
         if kde:
             sample_df = (
