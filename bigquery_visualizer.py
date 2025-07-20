@@ -360,16 +360,19 @@ class BigQueryVisualizer:
 
         bins = bins or 30
         query = f"""
-            WITH edges AS (
-                SELECT APPROX_QUANTILES({numeric_column}, {bins + 1}) AS qs
+            WITH base AS (
+                SELECT {numeric_column}{(',' + color_dimension) if color_dimension else ''}
                 FROM {self.full_table_path}
                 {where_sql}
+            ),
+            edges AS (
+                SELECT APPROX_QUANTILES({numeric_column}, {bins + 1}) AS qs
+                FROM base
             ),
             bucketed AS (
                 SELECT WIDTH_BUCKET({numeric_column}, qs) AS bucket
                        {(',' + color_dimension) if color_dimension else ''}
-                FROM {self.full_table_path}, edges
-                {where_sql}
+                FROM base, edges
             )
             SELECT
               bucket
@@ -604,12 +607,15 @@ class BigQueryVisualizer:
 
         if bin_dim and bins:
             bin_cte = f"""
-                WITH stats AS (
+                WITH base AS (
+                    SELECT * FROM {self.full_table_path}
+                    {merged_where}
+                ),
+                stats AS (
                     SELECT
                         MIN({cast_dim}) AS min_val,
                         MAX({cast_dim}) AS max_val
-                    FROM {self.full_table_path}
-                    {merged_where}
+                    FROM base
                 ),
                 binned AS (
                     SELECT
@@ -634,10 +640,9 @@ class BigQueryVisualizer:
                             ) AS bin_num
                         FROM (
                             SELECT
-                                *,
+                                base.*,
                                 (max_val - min_val) / {bins} AS bin_width
-                            FROM stats, {self.full_table_path}
-                            {merged_where}
+                            FROM base, stats
                         )
                     )
                 )
@@ -650,6 +655,8 @@ class BigQueryVisualizer:
         else:
             query_start, source_alias = "", self.full_table_path
 
+        final_where = merged_where if source_alias == self.full_table_path else ""
+
         first_metric = next(iter(metric_meta))
         order_clause = (f"ORDER BY {order_by.strip() + (' DESC' if ' ' not in order_by else '')}"
                         if order_by else f"ORDER BY {first_metric} DESC")
@@ -661,7 +668,7 @@ class BigQueryVisualizer:
             {query_start}
             SELECT {', '.join(select_parts)}
             FROM {source_alias}
-            {merged_where}
+            {final_where}
             GROUP BY {group_by_clause}
             {order_clause}
             {limit_clause}
@@ -1270,18 +1277,22 @@ class BigQueryVisualizer:
         """
         logger.info("🔍 Analyzing categorical column: %s", categorical_column)
         query = f"""
-            WITH base_stats AS (
+            WITH base AS (
+                SELECT {categorical_column}
+                FROM {self.full_table_path}
+            ),
+            base_stats AS (
                 SELECT
                     COUNT(*) AS total_rows,
                     COUNTIF({categorical_column} IS NULL) AS null_count,
                     COUNT(DISTINCT {categorical_column}) AS unique_count
-                FROM {self.full_table_path}
+                FROM base
             ),
             top_values AS (
                 SELECT
                     {categorical_column} as value,
                     COUNT(*) as count
-                FROM {self.full_table_path}
+                FROM base
                 WHERE {categorical_column} IS NOT NULL
                 GROUP BY 1
                 ORDER BY 2 DESC
