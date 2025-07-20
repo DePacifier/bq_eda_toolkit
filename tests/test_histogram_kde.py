@@ -32,3 +32,5 @@ def test_histogram_with_kde():
     _, fig = viz.plot_histogram(numeric_column='num', kde=True, bins=5)
     assert fig is not None
     assert len(fig.data) > 1
+    assert hasattr(fig.data[0], 'customdata')
+    assert 'Share' in fig.data[0].hovertemplate
