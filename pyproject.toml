@@ -21,6 +21,8 @@ dependencies = [
     "numpy",
     "jinja2",
     "umap-learn",
+    "polars",
+    "pyarrow",
 ]
 
 [project.urls]

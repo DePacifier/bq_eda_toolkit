@@ -3,11 +3,12 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 
 import pandas as pd
+import polars as pl
 from pathlib import Path
 from bq_eda_toolkit.bigquery_visualizer import BigQueryVisualizer
 
 class DummyViz(BigQueryVisualizer):
-    def __init__(self):
+    def __init__(self, cache_dir=Path("/tmp/test_cache"), clear_cache=True):
         self.full_table_path = 'x'
         self._query_cache = {}
         self.max_result_bytes = 100
@@ -25,10 +26,10 @@ class DummyViz(BigQueryVisualizer):
         self.complex_columns = []
         self.geographic_columns = []
         self.client = None
-        self.sample_cache_dir = Path("/tmp/test_cache")
+        self.sample_cache_dir = Path(cache_dir)
         self.sample_cache_dir.mkdir(exist_ok=True)
-        self.rep_sample_columns_key = None
-        self.rep_sample_df = None
+        if clear_cache:
+            self.__class__.clear_sample_cache(disk=True, cache_dir=self.sample_cache_dir)
         self._calls = 0
         self.auto_show = False
     def _execute_query(self, q, use_cache=True):
@@ -45,12 +46,14 @@ class DummyViz(BigQueryVisualizer):
 def test_representative_sample_cached():
     viz = DummyViz()
     df1 = viz.get_representative_sample()
+    assert isinstance(df1, pl.LazyFrame)
     assert 'LIMIT 3' in viz.last_query
     assert viz.bias_called
     calls = viz._calls
     df2 = viz.get_representative_sample()
+    assert isinstance(df2, pl.LazyFrame)
     assert viz._calls == calls
-    assert df1.equals(df2)
+    assert df1.collect().to_pandas().equals(df2.collect().to_pandas())
 
 def test_representative_sample_refresh():
     viz = DummyViz()
@@ -58,3 +61,26 @@ def test_representative_sample_refresh():
     calls = viz._calls
     viz.get_representative_sample(refresh=True)
     assert viz._calls == calls + 1
+
+
+def test_sample_cache_autoreload(tmp_path):
+    viz1 = DummyViz(cache_dir=tmp_path)
+    df1 = viz1.get_representative_sample()
+    assert isinstance(df1, pl.LazyFrame)
+    assert viz1._calls == 1
+
+    DummyViz.clear_sample_cache()
+
+    viz2 = DummyViz(cache_dir=tmp_path, clear_cache=False)
+    df2 = viz2.get_representative_sample()
+    assert isinstance(df2, pl.LazyFrame)
+    assert viz2._calls == 0
+    assert df1.collect().to_pandas().equals(df2.collect().to_pandas())
+
+
+def test_clear_sample_cache(tmp_path):
+    viz = DummyViz(cache_dir=tmp_path)
+    viz.get_representative_sample()
+    assert list(tmp_path.glob("rep_*.parquet"))
+    DummyViz.clear_sample_cache(disk=True, cache_dir=tmp_path)
+    assert not list(tmp_path.glob("rep_*.parquet"))
