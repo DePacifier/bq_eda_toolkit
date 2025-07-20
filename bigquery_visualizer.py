@@ -1302,7 +1302,7 @@ class BigQueryVisualizer:
         stats = df.iloc[0].to_dict()
 
         summary = {
-            # "Total Rows": int(stats['total_rows']),
+            "Total Rows": int(stats['total_rows']),
             "Null Count": int(stats['null_count']),
             "Null %": (stats['null_count'] / stats['total_rows']) * 100,
             "Unique Values": int(stats['unique_count']),
@@ -1381,21 +1381,25 @@ class BigQueryVisualizer:
                 top_vals = summary.get("Top Values", [])
                 if len(top_vals):
                     row["Mode"] = top_vals[0]["value"]
-                    row["Mode Freq."] = (top_vals[0]["count"] / (summary["Null Count"] + sum(v["count"] for v in top_vals))) * 100
+                    row["Mode Freq."] = (top_vals[0]["count"] / summary["Total Rows"]) * 100
                 else:
                     row["Mode"] = None
                     row["Mode Freq."] = 0.0
 
                 # Expand Top 1 … Top N as percentages
-                total_rows = summary["Null Count"] + sum(v["count"] for v in top_vals)
+                total_rows = summary["Total Rows"]
                 for rank in range(1, top_n_values + 1):
                     if rank - 1 < len(top_vals):
                         value = top_vals[rank - 1]["value"]
                         pct = (top_vals[rank - 1]["count"] / total_rows) * 100
                     else:
                         value, pct = None, None
-                    row[f"Top {rank}"] = f"{value} ({pct:.2f}%)" if pct is not None else None
+                    row[f"Top {rank}"] = f"{value} ({pct:.4f}%)" if pct is not None else None
 
+                covered = sum(v["count"] for v in top_vals)
+                other_pct = (summary["Total Rows"] - covered - summary["Null Count"]) / summary["Total Rows"] * 100
+                row["Other %"] = round(other_pct, 4)
+                
                 all_results.append(row)
 
         if not all_results:
@@ -1404,14 +1408,12 @@ class BigQueryVisualizer:
         
         summary_df = pd.DataFrame(all_results).set_index('column_name')
         
-        # # Define a nice column order
-        # col_order = [
-        #     'Null %', 'Unique Values', 'Mode', 'Mode Freq.', 'Top Values'
-        # ]
-        # summary_df = summary_df[col_order]
-        
         logger.info("✅ Analysis complete.")
-        return summary_df.style.background_gradient(cmap='Reds', subset=['Null %'])
+        return summary_df.style.format({
+            'Null %': '{:.4f}%',
+            'Mode Freq.': '{:,.2f}%',
+            'Other %': '{:,.4f}%'
+        }).background_gradient(cmap='Reds', subset=['Null %'])
 
     # ------------------------------------------------------------------
     # Sampling & bias evaluation utilities
