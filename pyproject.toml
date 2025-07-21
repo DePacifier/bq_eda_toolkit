@@ -23,6 +23,7 @@ dependencies = [
     "umap-learn",
     "polars",
     "pyarrow",
+    "great_expectations",
 ]
 
 [project.urls]

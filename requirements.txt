@@ -10,3 +10,4 @@ jinja2
 umap-learn
 polars
 pyarrow
+great_expectations

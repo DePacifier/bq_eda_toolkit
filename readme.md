@@ -131,6 +131,24 @@ ctx = pipe.run(viz)
 Results are shared via the `AnalysisContext`, so custom stages can consume or
 produce tables just like the built‑in ones.
 
+### Validation with Great Expectations
+
+`ValidationStage` transforms profiling and quality tables into a
+[Great Expectations](https://greatexpectations.io/) `ExpectationSuite`.
+Include this stage after `QualityStage` to generate a suite:
+
+```python
+from bq_eda_toolkit.stages import ProfilingStage, QualityStage, ValidationStage
+from bq_eda_toolkit.pipeline import Pipeline
+
+pipe = Pipeline(stages=[ProfilingStage(), QualityStage(), ValidationStage()])
+ctx = pipe.run(viz)
+suite_json = ctx.get_table("validation.expectation_suite")
+```
+
+The JSON dict can be saved and later loaded with
+`ExpectationSuite.from_json_dict()` to validate new data.
+
 ## 🛠️ Configuration
 
 BigQuery credentials can be supplied either via the `credentials_path` argument or by setting the `GOOGLE_APPLICATION_CREDENTIALS` environment variable. The visualizer also exposes query guard parameters:

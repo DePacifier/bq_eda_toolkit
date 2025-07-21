@@ -10,6 +10,7 @@ from .core_stages import (
     RepSampleStage,
 )
 from .comparison import DatasetComparisonStage
+from .validation import ValidationStage
 
 __all__ = [
     "ProfilingStage",
@@ -20,5 +21,6 @@ __all__ = [
     "TargetStage",
     "RepSampleStage",
     "DatasetComparisonStage",
+    "ValidationStage",
 ]
 
