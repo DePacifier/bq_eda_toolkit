@@ -1281,17 +1281,19 @@ class BigQueryVisualizer:
 
         return df, fig
     
-    def analyze_numeric_column(self, numeric_column: str):
+    def analyze_numeric_column(self, numeric_column: str, filter: str | None = None):
         """
         Performs a full descriptive analysis of a numeric column using BigQuery aggregations.
 
         Args:
             numeric_column (str): The numeric column to analyze.
+            filter (str, Optional): SQL WHERE clause fragment.
         
         Returns:
             pd.DataFrame: A DataFrame containing the descriptive statistics.
         """
         logger.info("🔍 Analyzing numeric column: %s", numeric_column)
+        where_clause = self._build_where_clause(filter)
         query = f"""
             SELECT
                 COUNT(*) AS total_rows,
@@ -1306,6 +1308,7 @@ class BigQueryVisualizer:
                 KURTOSIS({numeric_column}) AS kurtosis,
                 APPROX_QUANTILES({numeric_column}, 4) AS quartiles
             FROM {self.full_table_path}
+            {where_clause}
         """
         df = self._execute_query(query)
         if df.empty or df.iloc[0]['total_rows'] == 0:
@@ -1335,22 +1338,25 @@ class BigQueryVisualizer:
         
         return summary
 
-    def analyze_categorical_column(self, categorical_column: str, top_n_values: int = 10):
+    def analyze_categorical_column(self, categorical_column: str, top_n_values: int = 10, filter: str | None = None):
         """
         Performs a full descriptive analysis of a categorical column using BigQuery aggregations.
 
         Args:
             categorical_column (str): The categorical column to analyze.
             top_n_values (int): The number of most frequent values to display.
+            filter (str, Optional): SQL WHERE clause fragment.
         
         Returns:
             pd.DataFrame: A DataFrame containing the descriptive statistics.
         """
         logger.info("🔍 Analyzing categorical column: %s", categorical_column)
+        where_clause = self._build_where_clause(filter)
         query = f"""
             WITH base AS (
                 SELECT {categorical_column}
                 FROM {self.full_table_path}
+                {where_clause}
             ),
             base_stats AS (
                 SELECT
@@ -1393,7 +1399,7 @@ class BigQueryVisualizer:
         
         return summary
     
-    def analyze_all_numeric(self, numeric_columns: list = None):
+    def analyze_all_numeric(self, numeric_columns: list = None, filter: str | None = None):
         """
         Runs descriptive analysis for all numeric columns and returns a single summary DataFrame.
         """
@@ -1402,7 +1408,7 @@ class BigQueryVisualizer:
         all_results = []
         numeric_columns = [col for col in numeric_columns if col in self.numeric_columns] if numeric_columns else self.numeric_columns
         for col in numeric_columns:
-            summary = self.analyze_numeric_column(col)
+            summary = self.analyze_numeric_column(col, filter)
             if summary:
                 summary['column_name'] = col
                 all_results.append(summary)
@@ -1440,7 +1446,7 @@ class BigQueryVisualizer:
             'IQR': '{:,.2f}'
         }).background_gradient(cmap='viridis', subset=['Null %'])
 
-    def analyze_all_categorical(self, top_n_values: int = 5, categorical_columns: list = None):
+    def analyze_all_categorical(self, top_n_values: int = 5, categorical_columns: list = None, filter: str | None = None):
         """
         Runs analysis for all categorical columns and returns a single summary DataFrame
         with top-N values expanded into separate columns as percentages.
@@ -1450,7 +1456,7 @@ class BigQueryVisualizer:
         all_results = []
         categorical_columns = [col for col in categorical_columns if col in self.categorical_columns] if categorical_columns else self.categorical_columns
         for col in categorical_columns:
-            summary = self.analyze_categorical_column(col, top_n_values=top_n_values)
+            summary = self.analyze_categorical_column(col, top_n_values=top_n_values, filter=filter)
             if summary:
                 # Build the base record
                 row = {
