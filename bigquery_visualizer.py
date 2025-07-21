@@ -219,7 +219,12 @@ class BigQueryVisualizer:
         
         return df.style.set_properties(**{'text-align': 'left'}).set_table_styles([dict(selector='th', props=[('text-align', 'left')])])
     
-    def plot_table_chart(self, dimensions: list, metrics: dict, order_by: str = None, limit: int = None):
+    def plot_table_chart(self, 
+                        dimensions: list,
+                        metrics: dict,
+                        filter: str | None = None,
+                        order_by: str = None,
+                        limit: int = None):
         """
         Generates a table chart by grouping dimensions and aggregating metrics.
 
@@ -227,6 +232,7 @@ class BigQueryVisualizer:
             dimensions (list): A list of column names to group by.
             metrics (dict): A dictionary where keys are column names (or 'record_count') 
                             and values are the aggregation type (e.g., 'SUM', 'AVG', 'COUNT', 'COUNT_DISTINCT').
+            filter (str, optional): Extra SQL in the WHERE clause (without leading "WHERE").
             order_by (str, optional): The column to sort by (e.g., 'total_sales DESC').
             limit (int): The number of rows to return.
 
@@ -261,6 +267,7 @@ class BigQueryVisualizer:
                 alias = f"{agg.lower()}_{metric}"
                 select_parts.append(f"{agg_upper}({metric}) AS {alias}")
         
+        base_where = self._build_where_clause(filter)
         select_clause = ",\n      ".join(select_parts)
         
         # 2. Construct the GROUP BY clause
@@ -276,6 +283,7 @@ class BigQueryVisualizer:
                 SELECT
                 {select_clause}
                 FROM {self.full_table_path}
+                {base_where}
                 GROUP BY {group_by_clause}
             ),
             totals AS (
@@ -704,11 +712,14 @@ class BigQueryVisualizer:
         )
 
         if show_pct:
+            label_field = "%{x}" if orientation == "v" else "%{y}"
+            value_field = "%{y}" if orientation == "v" else "%{x}"
+            
             fig.update_traces(
                 hovertemplate=(
-                    f"<b>%{{x}}</b><br>"
-                    f"{metric_meta[y_axis]}: %{{y}}<br>"
-                    f"Share: %{{customdata}}%<extra></extra>"
+                    f"<b>{label_field}</b><br>"
+                    f"{metric_meta[y_axis]}: {value_field}<br>"
+                    "Share: %{customdata}%<extra></extra>"
                 ),
                 customdata=df[f"{first_metric}_pct"],
             )
