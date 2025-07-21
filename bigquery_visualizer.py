@@ -1,4 +1,5 @@
 import pandas as pd
+import polars as pl
 import seaborn as sns
 import matplotlib.pyplot as plt
 import plotly.express as px
@@ -6,6 +7,7 @@ from google.cloud import bigquery
 from google.oauth2 import service_account
 from .utils.bq_executor import execute_query_with_guard
 from pathlib import Path
+from typing import ClassVar
 import hashlib
 import numpy as np
 from scipy.stats import ks_2samp, chi2_contingency, gaussian_kde
@@ -28,6 +30,9 @@ class BigQueryVisualizer:
     An enhanced class to connect to a BigQuery table and generate visualizations
     and descriptive analyses directly in a Python notebook.
     """
+    _lazy_sample_cache: ClassVar[dict[str, pl.LazyFrame]] = {}
+    _lazy_cache_dir: ClassVar[Path | None] = None
+
     def __init__(
         self,
         project_id: str,
@@ -38,6 +43,7 @@ class BigQueryVisualizer:
         cache_threshold_bytes: int = 100_000_000,
         sample_cache_dir: str = ".rep_samples",
         auto_show: bool = False,
+        auto_reload_samples: bool = True,
     ):
         """
         Initializes the visualizer with BigQuery credentials and table info.
@@ -52,6 +58,7 @@ class BigQueryVisualizer:
             cache_threshold_bytes (int): Only cache DataFrames smaller than this size.
             sample_cache_dir (str): Directory to persist representative samples.
             auto_show (bool): Automatically display generated figures. Defaults to ``False``.
+            auto_reload_samples (bool): Pre-load cached samples on initialization.
         """
         self.project_id = project_id
         self.table_id = table_id
@@ -60,10 +67,10 @@ class BigQueryVisualizer:
         self.max_bytes_scanned = max_bytes_scanned
         self.max_result_bytes = max_result_bytes
         self.cache_threshold_bytes = cache_threshold_bytes
-        self.rep_sample_df: pd.DataFrame | None = None
-        self.rep_sample_columns_key: str | None = None
         self.sample_cache_dir = Path(sample_cache_dir)
         self.sample_cache_dir.mkdir(parents=True, exist_ok=True)
+        if auto_reload_samples:
+            self.__class__._load_cached_samples(self.sample_cache_dir)
         self.auto_show = auto_show
         
         if credentials_path:
@@ -169,6 +176,33 @@ class BigQueryVisualizer:
     def clear_cache(self):
         """Empty the in‑memory query cache."""
         self._query_cache.clear()
+
+    # --------------------------------------------------------------
+    # Sample cache management utilities
+    # --------------------------------------------------------------
+    @classmethod
+    def _load_cached_samples(cls, cache_dir: Path):
+        """Load existing sample files as lazy Polars frames."""
+        if cls._lazy_cache_dir == cache_dir:
+            return
+        cls._lazy_sample_cache.clear()
+        for fp in cache_dir.glob("rep_*.parquet"):
+            key = fp.stem.replace("rep_", "")
+            cls._lazy_sample_cache[key] = pl.scan_parquet(fp)
+        cls._lazy_cache_dir = cache_dir
+
+    @classmethod
+    def clear_sample_cache(cls, *, disk: bool = False, cache_dir: Path | None = None):
+        """Clear cached representative samples."""
+        cls._lazy_sample_cache.clear()
+        if disk:
+            dir_path = cache_dir or cls._lazy_cache_dir
+            if dir_path:
+                for fp in Path(dir_path).glob("rep_*.parquet"):
+                    try:
+                        fp.unlink()
+                    except Exception as e:
+                        logger.warning("⚠️ Failed to delete %s: %s", fp, e)
 
     def _build_where_clause(self, filter_str: str) -> str:
         """Helper to build a SQL WHERE clause from a filter string."""
@@ -324,6 +358,7 @@ class BigQueryVisualizer:
         cumulative: bool = False,
         kde: bool = False,
         title: str | None = None,
+        show_pct: bool = True,
     ):
         """
         Quick numeric **histogram** with optional colour split.
@@ -352,6 +387,8 @@ class BigQueryVisualizer:
             Overlay a kernel density estimate.
         title : str | None
             Custom chart title.
+        show_pct : bool
+            Add share (%) to hover information.
 
         Returns
         -------
@@ -368,16 +405,19 @@ class BigQueryVisualizer:
 
         bins = bins or 30
         query = f"""
-            WITH edges AS (
-                SELECT APPROX_QUANTILES({numeric_column}, {bins + 1}) AS qs
+            WITH base AS (
+                SELECT {numeric_column}{(',' + color_dimension) if color_dimension else ''}
                 FROM {self.full_table_path}
                 {where_sql}
+            ),
+            edges AS (
+                SELECT APPROX_QUANTILES({numeric_column}, {bins + 1}) AS qs
+                FROM base
             ),
             bucketed AS (
                 SELECT WIDTH_BUCKET({numeric_column}, qs) AS bucket
                        {(',' + color_dimension) if color_dimension else ''}
-                FROM {self.full_table_path}, edges
-                {where_sql}
+                FROM base, edges
             )
             SELECT
               bucket
@@ -407,17 +447,36 @@ class BigQueryVisualizer:
         if cumulative:
             y = y.cumsum()
         hist_df['value'] = y
+        hist_df['pct'] = (hist_df['n'] / total * 100).round(2)
 
-        fig = px.bar(hist_df, x='bin_start', y='value', color=color_dimension,
-                      title=title or f"Distribution of {numeric_column}"
-                      + (f" by {color_dimension}" if color_dimension else ""))
+        fig = px.bar(
+            hist_df,
+            x='bin_start',
+            y='value',
+            color=color_dimension,
+            title=title or f"Distribution of {numeric_column}" + (
+                f" by {color_dimension}" if color_dimension else ""
+            ),
+        )
         if log_x:
             fig.update_layout(xaxis_type='log')
         ylabel = {'percent':'Percent','probability':'Probability','density':'Density'}.get(histnorm,'Count')
         fig.update_layout(margin=dict(l=0,r=0,t=40,b=0), yaxis_title=ylabel)
 
+        if show_pct:
+            fig.update_traces(
+                hovertemplate=(
+                    f"<b>%{{x}}</b><br>{ylabel}: %{{y}}<br>Share: %{{customdata}}%<extra></extra>"
+                ),
+                customdata=hist_df["pct"],
+            )
+
         if kde:
-            sample_df = self.get_representative_sample(columns=[numeric_column])
+            sample_df = (
+                self.get_representative_sample(columns=[numeric_column])
+                .collect()
+                .to_pandas()
+            )
             vals = sample_df[numeric_column].dropna().to_numpy()
             if log_x:
                 vals = np.log10(vals[vals>0])
@@ -446,7 +505,11 @@ class BigQueryVisualizer:
         """Return a scatter-matrix plot for a sample of ``columns``."""
 
         select_cols = columns + ([color_dimension] if color_dimension else [])
-        df = self.get_representative_sample(columns=select_cols)
+        df = (
+            self.get_representative_sample(columns=select_cols)
+            .collect()
+            .to_pandas()
+        )
         if df.empty:
             return pd.DataFrame(), None
 
@@ -612,12 +675,15 @@ class BigQueryVisualizer:
 
         if bin_dim and bins:
             bin_cte = f"""
-                WITH stats AS (
+                WITH base AS (
+                    SELECT * FROM {self.full_table_path}
+                    {merged_where}
+                ),
+                stats AS (
                     SELECT
                         MIN({cast_dim}) AS min_val,
                         MAX({cast_dim}) AS max_val
-                    FROM {self.full_table_path}
-                    {merged_where}
+                    FROM base
                 ),
                 binned AS (
                     SELECT
@@ -642,10 +708,9 @@ class BigQueryVisualizer:
                             ) AS bin_num
                         FROM (
                             SELECT
-                                *,
+                                base.*,
                                 (max_val - min_val) / {bins} AS bin_width
-                            FROM stats, {self.full_table_path}
-                            {merged_where}
+                            FROM base, stats
                         )
                     )
                 )
@@ -658,6 +723,8 @@ class BigQueryVisualizer:
         else:
             query_start, source_alias = "", self.full_table_path
 
+        final_where = merged_where if source_alias == self.full_table_path else ""
+
         first_metric = next(iter(metric_meta))
         order_clause = (f"ORDER BY {order_by.strip() + (' DESC' if ' ' not in order_by else '')}"
                         if order_by else f"ORDER BY {first_metric} DESC")
@@ -669,7 +736,7 @@ class BigQueryVisualizer:
             {query_start}
             SELECT {', '.join(select_parts)}
             FROM {source_alias}
-            {merged_where}
+            {final_where}
             GROUP BY {group_by_clause}
             {order_clause}
             {limit_clause}
@@ -1281,18 +1348,22 @@ class BigQueryVisualizer:
         """
         logger.info("🔍 Analyzing categorical column: %s", categorical_column)
         query = f"""
-            WITH base_stats AS (
+            WITH base AS (
+                SELECT {categorical_column}
+                FROM {self.full_table_path}
+            ),
+            base_stats AS (
                 SELECT
                     COUNT(*) AS total_rows,
                     COUNTIF({categorical_column} IS NULL) AS null_count,
                     COUNT(DISTINCT {categorical_column}) AS unique_count
-                FROM {self.full_table_path}
+                FROM base
             ),
             top_values AS (
                 SELECT
                     {categorical_column} as value,
                     COUNT(*) as count
-                FROM {self.full_table_path}
+                FROM base
                 WHERE {categorical_column} IS NOT NULL
                 GROUP BY 1
                 ORDER BY 2 DESC
@@ -1498,23 +1569,23 @@ class BigQueryVisualizer:
         columns: list[str] | None = None,
         max_bytes: int | None = None,
         refresh: bool = False,
-    ) -> pd.DataFrame:
-        """Return and cache a representative sample of the table."""
+    ) -> pl.LazyFrame:
+        """Return and cache a representative sample of the table as ``LazyFrame``."""
 
         cols = columns or self.columns
         key = ",".join(sorted(cols))
-        fname = self.sample_cache_dir / f"rep_{hashlib.md5(key.encode()).hexdigest()}.csv"
+        hash_key = hashlib.md5(key.encode()).hexdigest()
+        fname = self.sample_cache_dir / f"rep_{hash_key}.parquet"
 
-        # We intentionally do not load previously cached samples from disk
-        # so queries execute at least once per session. The sampled data is still
-        # written to ``fname`` for offline inspection.
+        # in-memory lazy cache
+        if not refresh and hash_key in self.__class__._lazy_sample_cache:
+            return self.__class__._lazy_sample_cache[hash_key]
 
-        if (
-            self.rep_sample_df is not None
-            and self.rep_sample_columns_key == key
-            and not refresh
-        ):
-            return self.rep_sample_df.copy()
+        # on-disk cache
+        if not refresh and fname.exists():
+            lf = pl.scan_parquet(fname)
+            self.__class__._lazy_sample_cache[hash_key] = lf
+            return lf
 
         n_override = None
         if max_bytes is not None:
@@ -1537,13 +1608,14 @@ class BigQueryVisualizer:
         df = self._execute_query(query)
         if not df.empty:
             self.evaluate_sample_bias(sample_rows=min(1000, len(df)))
-        self.rep_sample_df = df
-        self.rep_sample_columns_key = key
-        try:
-            df.to_csv(fname, index=False)
-        except Exception as e:
-            logger.warning("⚠️ Could not cache sample to %s: %s", fname, e)
-        return df.copy()
+            try:
+                pl.from_pandas(df).write_parquet(fname)
+                lf = pl.scan_parquet(fname)
+                self.__class__._lazy_sample_cache[hash_key] = lf
+            except Exception as e:
+                logger.warning("⚠️ Could not cache sample to %s: %s", fname, e)
+            return lf
+        return pl.DataFrame([]).lazy()
 
     def missingness_correlation(
         self,
@@ -1553,7 +1625,11 @@ class BigQueryVisualizer:
         """Return the correlation matrix of null indicators for ``columns``."""
 
         cols = columns or self.columns
-        df = self.get_representative_sample(columns=cols)
+        df = (
+            self.get_representative_sample(columns=cols)
+            .collect()
+            .to_pandas()
+        )
         if df.empty:
             return pd.DataFrame()
         df = df[cols]
@@ -1572,7 +1648,11 @@ class BigQueryVisualizer:
         """Identify the most common combinations of missing values."""
 
         cols = columns or self.columns
-        df = self.get_representative_sample(columns=cols)
+        df = (
+            self.get_representative_sample(columns=cols)
+            .collect()
+            .to_pandas()
+        )
         if df.empty:
             return pd.DataFrame()
         df = df[cols]
@@ -1601,7 +1681,11 @@ class BigQueryVisualizer:
         """
 
         cols = columns or self.columns
-        df = self.get_representative_sample(columns=cols)
+        df = (
+            self.get_representative_sample(columns=cols)
+            .collect()
+            .to_pandas()
+        )
         if df.empty:
             return pd.DataFrame(), None, pd.DataFrame()
         df = df[cols]
@@ -1766,7 +1850,11 @@ class BigQueryVisualizer:
     ) -> tuple[pd.DataFrame, px.line] | tuple[pd.DataFrame, None]:
         """Compute simple 1‑D partial dependence using a representative sample."""
 
-        df = self.get_representative_sample(columns=[feature, target])
+        df = (
+            self.get_representative_sample(columns=[feature, target])
+            .collect()
+            .to_pandas()
+        )
         if df.empty:
             return pd.DataFrame(), None
 

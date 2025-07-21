@@ -8,3 +8,5 @@ scikit-learn
 numpy
 jinja2
 umap-learn
+polars
+pyarrow
