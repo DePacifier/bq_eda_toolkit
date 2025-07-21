@@ -73,6 +73,12 @@ row_count_df = execute_query_with_guard(
     viz.client,
     "SELECT COUNT(*) AS n FROM dataset.table",
 )
+
+# Use DatasetComparisonStage to check for distribution drift between tables
+# results are stored under "comparison.drift_tests"
+other = BigQueryVisualizer(project_id="my-project", table_id="dataset.previous")
+ctx = Pipeline(stages=[DatasetComparisonStage(other)]).run(viz)
+print(ctx.get_table("comparison.drift_tests"))
 ```
 
 Visualisation functions return Plotly or Matplotlib objects. They do not call

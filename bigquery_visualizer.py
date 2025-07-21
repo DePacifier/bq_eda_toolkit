@@ -1564,6 +1564,66 @@ class BigQueryVisualizer:
 
         return pd.DataFrame(results)
 
+    def compare_to(
+        self,
+        other: "BigQueryVisualizer",
+        *,
+        sample_rows: int = 1000,
+        alpha: float = 0.05,
+    ) -> pd.DataFrame:
+        """Statistically compare this table to ``other``.
+
+        Numeric columns are compared with the Kolmogorov–Smirnov test and
+        categorical columns with a Chi-squared test. ``alpha`` controls the
+        threshold for flagging distribution drift.
+        """
+
+        self_sample = self.fetch_sample(sample_rows)
+        other_sample = other.fetch_sample(sample_rows)
+
+        results: list[dict] = []
+
+        # numeric columns – KS test on intersection
+        for col in [c for c in self.numeric_columns if c in other.numeric_columns]:
+            a = self_sample[col].dropna()
+            b = other_sample[col].dropna()
+            if a.empty or b.empty:
+                continue
+            stat, pval = ks_2samp(a, b)
+            results.append(
+                {
+                    "column": col,
+                    "test": "ks",
+                    "statistic": stat,
+                    "p_value": pval,
+                    "drift": pval < alpha,
+                }
+            )
+
+        # categorical columns – Chi^2 on frequency tables
+        for col in [c for c in self.categorical_columns if c in other.categorical_columns]:
+            a_counts = self_sample[col].value_counts().rename("a")
+            b_counts = other_sample[col].value_counts().rename("b")
+            both = (
+                pd.concat([a_counts, b_counts], axis=1)
+                .fillna(0)
+                .astype(int)
+            )
+            if both.empty:
+                continue
+            chi2, pval, _, _ = chi2_contingency(both.T.values)
+            results.append(
+                {
+                    "column": col,
+                    "test": "chi2",
+                    "statistic": chi2,
+                    "p_value": pval,
+                    "drift": pval < alpha,
+                }
+            )
+
+        return pd.DataFrame(results)
+
     def get_representative_sample(
         self,
         columns: list[str] | None = None,
