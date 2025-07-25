@@ -239,10 +239,17 @@ class BigQueryVisualizer:
         logger.info("📄 Fetching table data...")
         cols = "*" if not columns else ", ".join(columns)
         order_clause = f"ORDER BY {order_by}" if order_by else ""
-        
+
+        limit = min(limit, 100)
+
+        sample_clause = ""
+        if self.table_rows:
+            pct = (100 / self.table_rows) * 100
+            sample_clause = f"TABLESAMPLE SYSTEM ({pct:g} PERCENT)"
+
         query = f"""
             SELECT {cols}
-            FROM {self.full_table_path}
+            FROM {self.full_table_path} {sample_clause}
             {order_clause}
             LIMIT {limit}
         """
@@ -1508,9 +1515,14 @@ class BigQueryVisualizer:
     # ------------------------------------------------------------------
     def fetch_sample(self, n: int, *, where: str | None = None) -> pd.DataFrame:
         """Return a random sample of ``n`` rows from the table."""
+        sample_clause = ""
+        if self.table_rows:
+            pct = n / self.table_rows * 100
+            sample_clause = f"TABLESAMPLE SYSTEM ({pct:g} PERCENT)"
+
         query = (
-            f"SELECT * FROM {self.full_table_path} "
-            f"{self._build_where_clause(where)} ORDER BY RAND() LIMIT {n}"
+            f"SELECT * FROM {self.full_table_path} {sample_clause} "
+            f"{self._build_where_clause(where)} LIMIT {n}"
         )
         return self._execute_query(query)
 
