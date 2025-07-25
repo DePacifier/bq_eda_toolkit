@@ -74,6 +74,10 @@ row_count_df = execute_query_with_guard(
     "SELECT COUNT(*) AS n FROM dataset.table",
 )
 
+# compute pairwise covariances
+cov = viz.numeric_covariances(["feature_a", "feature_b"])
+print(cov)
+
 # Use DatasetComparisonStage to check for distribution drift between tables
 # results are stored under "comparison.drift_tests"
 other = BigQueryVisualizer(project_id="my-project", table_id="dataset.previous")

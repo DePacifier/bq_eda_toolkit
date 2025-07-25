@@ -581,6 +581,40 @@ class BigQueryVisualizer:
             mat.loc[r["c1"], r["c2"]] = r["corr"]
             mat.loc[r["c2"], r["c1"]] = r["corr"]
         return mat
+
+    def numeric_covariances(
+        self,
+        columns: list[str],
+        *,
+        sample: bool = False,
+    ) -> pd.DataFrame:
+        """Return covariance matrix computed in BigQuery."""
+
+        if len(columns) < 2:
+            return pd.DataFrame()
+
+        func = "COVAR_SAMP" if sample else "COVAR_POP"
+        queries = []
+        for i, c1 in enumerate(columns):
+            for c2 in columns[i + 1 :]:
+                q = (
+                    f"SELECT '{c1}' AS c1, '{c2}' AS c2,"
+                    f" {func}({c1}, {c2}) AS cov FROM {self.full_table_path}"
+                )
+                queries.append(q)
+
+        query = " UNION ALL ".join(queries)
+        df = self._execute_query(query)
+        if df.empty:
+            return pd.DataFrame()
+
+        mat = pd.DataFrame(
+            np.zeros((len(columns), len(columns))), index=columns, columns=columns
+        )
+        for _, r in df.iterrows():
+            mat.loc[r["c1"], r["c2"]] = r["cov"]
+            mat.loc[r["c2"], r["c1"]] = r["cov"]
+        return mat
     
     def plot_categorical_chart(
         self,
