@@ -24,6 +24,9 @@ class DummyViz:
     def numeric_correlations(self, columns, method='pearson'):
         return pd.DataFrame([[1.0, 0.5],[0.5,1.0]], index=columns, columns=columns)
 
+    def numeric_covariances(self, columns, sample=False):
+        return pd.DataFrame([[0.0, 0.3],[0.3,0.0]], index=columns, columns=columns)
+
     def get_representative_sample(self, columns=None, max_bytes=None, refresh=False):
         if self.rep_sample_df is None or refresh:
             self.rep_sample_df = pd.DataFrame({

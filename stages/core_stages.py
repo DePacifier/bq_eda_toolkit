@@ -338,6 +338,10 @@ class BivariateStage(BaseStage):
             if not spear.empty:
                 ctx.add_table(self.key("spearman_corr"), spear)
 
+            cov = viz.numeric_covariances(num_cols)
+            if not cov.empty:
+                ctx.add_table(self.key("covariance"), cov)
+
             if ctx.params.get("lowess_plots"):
                 from itertools import combinations
                 df = (
