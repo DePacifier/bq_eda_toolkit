@@ -11,6 +11,7 @@ from typing import ClassVar
 import hashlib
 import numpy as np
 from scipy.stats import ks_2samp, chi2_contingency, gaussian_kde
+from distfit import distfit
 from sklearn.model_selection import train_test_split
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
@@ -615,6 +616,66 @@ class BigQueryVisualizer:
             mat.loc[r["c1"], r["c2"]] = r["cov"]
             mat.loc[r["c2"], r["c1"]] = r["cov"]
         return mat
+
+    def fit_distribution(
+        self,
+        *,
+        numeric_column: str,
+        filter: str | None = None,
+        limit: int | None = 10_000,
+        remove_nulls: bool = True,
+        method: str = "parametric",
+    ) -> tuple[pd.DataFrame, distfit] | tuple[pd.DataFrame, None]:
+        """Fit multiple distributions to ``numeric_column`` using ``distfit``.
+
+        Parameters
+        ----------
+        numeric_column : str
+            The numeric field whose distribution should be fitted.
+        filter : str | None
+            Optional SQL condition without leading ``WHERE``.
+        limit : int | None
+            LIMIT rows fetched for fitting (default 10k).
+        remove_nulls : bool
+            Drop ``NULL`` values before fitting.
+        method : str
+            ``distfit`` fitting method (``"parametric"`` or ``"quantile"``).
+
+        Returns
+        -------
+        pandas.DataFrame, distfit | None
+            The ``distfit`` summary table and fitted object.
+        """
+
+        logger.info("🔍 Fitting distribution…")
+
+        where_sql = self._build_where_clause(filter)
+        if remove_nulls:
+            where_sql = self._merge_where(where_sql, f"{numeric_column} IS NOT NULL")
+
+        query = f"""
+            SELECT {numeric_column}
+            FROM {self.full_table_path}
+            {where_sql}
+            {f'LIMIT {limit}' if limit else ''}
+        """
+        df = self._execute_query(query)
+        if df.empty:
+            logger.warning("Query returned no data.")
+            return pd.DataFrame(), None
+
+        vals = df[numeric_column].dropna().to_numpy()
+        if len(vals) < 2:
+            return pd.DataFrame(), None
+
+        fitter = distfit(method=method)
+        fitter.fit_transform(vals)
+        summary = fitter.summary
+
+        if self.auto_show:
+            fitter.plot()
+
+        return summary, fitter
     
     def plot_categorical_chart(
         self,

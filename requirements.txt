@@ -11,3 +11,4 @@ umap-learn
 polars
 pyarrow
 great_expectations
+distfit
