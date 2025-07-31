@@ -80,27 +80,41 @@ class BigQueryVisualizer:
         else:
             self.client = bigquery.Client(project=project_id)
             
-        logger.info("Fetching detailed table schema...")
-        # Initialize properties for each data type category
-        self.refresh_schema()
+        # Fetch table metadata
+        logger.info("Fetching table metadata...")
+        try:
+            full_table_ref = f"{self.project_id}.{self.table_id}"
+            table_info = self.client.get_table(full_table_ref)
 
-        # ──────────────── fetch basic table stats ────────────────
-        dataset_id, table_name = self.table_id.split('.')
-        meta = self._execute_query(
-            f"""
-            SELECT row_count, size_bytes
-            FROM `{dataset_id}.INFORMATION_SCHEMA.TABLES`
-            WHERE table_name = '{table_name}'
-            """
-        )
-        if not meta.empty:
-            self.table_rows = int(meta['row_count'].iloc[0])
-            self.table_size_gb = float(meta['size_bytes'].iloc[0]) / 1e9
-        else:
+            self.table_rows = table_info.num_rows
+            self.table_size_gb = table_info.num_bytes / 1e9 if table_info.num_bytes else 0
+            
+            # Get partitioning information
+            self.partition_info = None
+            if table_info.time_partitioning:
+                self.partition_info = f"TIME partitioned by {table_info.time_partitioning.field} ({table_info.time_partitioning.type_})"
+            elif table_info.range_partitioning:
+                 self.partition_info = f"RANGE partitioned by {table_info.range_partitioning.field}"
+
+            # Get clustering information
+            self.cluster_info = table_info.clustering_fields
+            
+        except Exception as e:
+            logger.error(f"Failed to fetch metadata for table {full_table_ref}: {e}")
             self.table_rows = None
             self.table_size_gb = None
+            self.partition_info = None
+            self.cluster_info = None
+        
+        # Initialize properties for each data type category
+        logger.info("Fetching detailed table schema...")
+        self.refresh_schema()
 
         logger.info(f"✅ BigQueryVisualizer initialized for table: {self.table_id}")
+        if self.partition_info:
+            logger.info(f"   - Partitioning: {self.partition_info}")
+        if self.cluster_info:
+            logger.info(f"   - Clustering: on columns {', '.join(self.cluster_info)}")
         logger.info(f"    ℹ️ Found {len(self.columns)} total columns:")
         if self.numeric_columns:
             logger.info(f"     - {len(self.numeric_columns)} numeric")
