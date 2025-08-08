@@ -27,9 +27,17 @@ def build_expectation_suite(viz: 'BigQueryVisualizer', ctx: 'AnalysisContext') -
 
     suite = ExpectationSuite('generated_suite')
 
+    # Map BigQuery types to GE-friendly types (pandas execution engine)
+    type_map = {
+        'INT64': 'int64', 'INTEGER': 'int64', 'NUMERIC': 'float64', 'BIGNUMERIC': 'float64',
+        'FLOAT64': 'float64', 'BOOL': 'bool', 'BOOLEAN': 'bool', 'STRING': 'str', 'BYTES': 'bytes',
+        'DATE': 'datetime64[ns]', 'DATETIME': 'datetime64[ns]', 'TIMESTAMP': 'datetime64[ns]', 'TIME': 'datetime64[ns]',
+        'GEOGRAPHY': 'object', 'ARRAY': 'object', 'STRUCT': 'object',
+    }
+
     for _, row in schema_df.iterrows():
         col = row['column_name']
-        dtype = row['data_type']
+        dtype = type_map.get(str(row['data_type']).upper(), 'object')
         suite.add_expectation_configuration(
             ExpectationConfiguration(
                 "expect_column_values_to_be_of_type",

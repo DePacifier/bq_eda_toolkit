@@ -27,10 +27,18 @@ class FeatureAdviceStage(BaseStage):
         def skew(col: str) -> float:
             if num_stats is None or num_stats.empty:
                 return 0.0
-            row = num_stats[num_stats["Column"] == col]
-            if row.empty:
+            # Support both DataFrame with 'column' column and legacy index-based
+            if "column" in num_stats.columns:
                 row = num_stats[num_stats["column"] == col]
-            return float(row["Skewness"].iloc[0]) if not row.empty else 0.0
+            elif "Column" in num_stats.columns:
+                row = num_stats[num_stats["Column"] == col]
+            else:
+                # treat index as column identifier
+                try:
+                    row = num_stats.loc[[col]]
+                except Exception:
+                    row = pd.DataFrame()
+            return float(row["Skewness"].iloc[0]) if not row.empty and "Skewness" in row.columns else 0.0
 
         def n_categories(col: str) -> int:
             if cat_quality is None or cat_quality.empty:

@@ -1,6 +1,6 @@
 # analysis_context.py
 from dataclasses import dataclass, field
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 import pandas as pd
 
 
@@ -30,8 +30,8 @@ class AnalysisContext:
     def add_figure(self, key: str, fig: Any) -> None:
         self.figures[key] = fig
 
-    def get_table(self, key: str) -> pd.DataFrame:
+    def get_table(self, key: str) -> Optional[pd.DataFrame]:
         return self.tables.get(key)
 
-    def get_figure(self, key: str) -> Any:
+    def get_figure(self, key: str) -> Optional[Any]:
         return self.figures.get(key)

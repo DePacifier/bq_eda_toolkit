@@ -31,7 +31,7 @@ def execute_query_with_guard(client, sql, job_config=None, max_gb_processed=1.0,
             f"(limit {max_result_bytes/1e9:.2f} GB). Aborting."
         )
 
-    logger.info("ℹ️ Query will process %0.2f GB", dry_job.total_bytes_processed / 1e9)
+    logger.info("Query will process %0.2f GB", dry_job.total_bytes_processed / 1e9)
 
     job = client.query(sql, job_config=job_config)
     return job.to_dataframe()

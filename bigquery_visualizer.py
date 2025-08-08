@@ -12,15 +12,20 @@ import hashlib
 import numpy as np
 from scipy.stats import ks_2samp, chi2_contingency, gaussian_kde
 from distfit import distfit
-from sklearn.model_selection import train_test_split
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 from sklearn.neighbors import NearestNeighbors
 import logging
 from .stages.core_stages import RepSampleStage
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+class _DFResult:
+    """Lightweight wrapper exposing a `.data` attribute with the DataFrame."""
+
+    def __init__(self, df: pd.DataFrame):
+        self.data = df
 
 
 class QueryExecutionError(RuntimeError):
@@ -45,6 +50,7 @@ class BigQueryVisualizer:
         sample_cache_dir: str = ".rep_samples",
         auto_show: bool = False,
         auto_reload_samples: bool = True,
+        verbose: bool = True,
     ):
         """
         Initializes the visualizer with BigQuery credentials and table info.
@@ -73,6 +79,7 @@ class BigQueryVisualizer:
         if auto_reload_samples:
             self.__class__._load_cached_samples(self.sample_cache_dir)
         self.auto_show = auto_show
+        self.verbose = verbose
         
         if credentials_path:
             self.credentials = service_account.Credentials.from_service_account_file(credentials_path)
@@ -81,7 +88,8 @@ class BigQueryVisualizer:
             self.client = bigquery.Client(project=project_id)
             
         # Fetch table metadata
-        logger.info("Fetching table metadata...")
+        if self.verbose:
+            logger.info("Fetching table metadata...")
         try:
             full_table_ref = f"{self.project_id}.{self.table_id}"
             table_info = self.client.get_table(full_table_ref)
@@ -94,7 +102,7 @@ class BigQueryVisualizer:
             if table_info.time_partitioning:
                 self.partition_info = f"TIME partitioned by {table_info.time_partitioning.field} ({table_info.time_partitioning.type_})"
             elif table_info.range_partitioning:
-                 self.partition_info = f"RANGE partitioned by {table_info.range_partitioning.field}"
+                self.partition_info = f"RANGE partitioned by {table_info.range_partitioning.field}"
 
             # Get clustering information
             self.cluster_info = table_info.clustering_fields
@@ -107,31 +115,33 @@ class BigQueryVisualizer:
             self.cluster_info = None
         
         # Initialize properties for each data type category
-        logger.info("Fetching detailed table schema...")
+        if self.verbose:
+            logger.info("Fetching detailed table schema...")
         self.refresh_schema()
 
-        logger.info(f"✅ BigQueryVisualizer initialized for table: {self.table_id}")
-        if self.partition_info:
-            logger.info(f"   - Partitioning: {self.partition_info}")
-        if self.cluster_info:
-            logger.info(f"   - Clustering: on columns {', '.join(self.cluster_info)}")
-        logger.info(f"    ℹ️ Found {len(self.columns)} total columns:")
-        if self.numeric_columns:
-            logger.info(f"     - {len(self.numeric_columns)} numeric")
-        if self.string_columns:
-            logger.info(f"     - {len(self.string_columns)} string")
-        if self.boolean_columns:
-            logger.info(f"     - {len(self.boolean_columns)} boolean")
-        if self.datetime_columns:
-            logger.info(f"     - {len(self.datetime_columns)} datetime")
-        if self.complex_columns:
-            logger.info(f"     - {len(self.complex_columns)} complex")
-        if self.geographic_columns:
-            logger.info(f"     - {len(self.geographic_columns)} geographic")
-        if self.table_rows is not None and self.table_size_gb is not None:
-            logger.info(
-                f"    ℹ️ {self.table_rows:,} rows · {self.table_size_gb:.2f} GB"
-            )
+        if self.verbose:
+            logger.info(f"BigQueryVisualizer initialized for table: {self.table_id}")
+            if self.partition_info:
+                logger.info(f"   - Partitioning: {self.partition_info}")
+            if self.cluster_info:
+                logger.info(f"   - Clustering: on columns {', '.join(self.cluster_info)}")
+            logger.info(f"   Found {len(self.columns)} total columns:")
+            if self.numeric_columns:
+                logger.info(f"     - {len(self.numeric_columns)} numeric")
+            if self.string_columns:
+                logger.info(f"     - {len(self.string_columns)} string")
+            if self.boolean_columns:
+                logger.info(f"     - {len(self.boolean_columns)} boolean")
+            if self.datetime_columns:
+                logger.info(f"     - {len(self.datetime_columns)} datetime")
+            if self.complex_columns:
+                logger.info(f"     - {len(self.complex_columns)} complex")
+            if self.geographic_columns:
+                logger.info(f"     - {len(self.geographic_columns)} geographic")
+            if self.table_rows is not None and self.table_size_gb is not None:
+                logger.info(
+                    f"   {self.table_rows:,} rows · {self.table_size_gb:.2f} GB"
+                )
 
     def refresh_schema(self):
         """Re-fetch INFORMATION_SCHEMA and update column lists."""
@@ -151,17 +161,17 @@ class BigQueryVisualizer:
         
         query = f"""
             SELECT
-              column_name,
-              data_type,
-              CASE
-                WHEN data_type IN ('INT64', 'FLOAT64', 'NUMERIC', 'BIGNUMERIC') THEN 'numeric'
-                WHEN data_type IN ('STRING', 'BYTES') THEN 'string'
-                WHEN data_type IN ('BOOL') THEN 'boolean'
-                WHEN data_type IN ('DATE', 'DATETIME', 'TIMESTAMP', 'TIME') THEN 'datetime'
-                WHEN data_type IN ('ARRAY', 'STRUCT') THEN 'complex'
-                WHEN data_type IN ('GEOGRAPHY') THEN 'geographic'
-                ELSE 'other'
-              END as category
+                column_name,
+                data_type,
+                    CASE
+                    WHEN data_type IN ('INT64', 'FLOAT64', 'NUMERIC', 'BIGNUMERIC') THEN 'numeric'
+                    WHEN data_type IN ('STRING', 'BYTES') THEN 'string'
+                    WHEN data_type IN ('BOOL') THEN 'boolean'
+                    WHEN data_type IN ('DATE', 'DATETIME', 'TIMESTAMP', 'TIME') THEN 'datetime'
+                    WHEN data_type IN ('ARRAY', 'STRUCT') THEN 'complex'
+                    WHEN data_type IN ('GEOGRAPHY') THEN 'geographic'
+                    ELSE 'other'
+                END as category
             FROM `{dataset_id}.INFORMATION_SCHEMA.COLUMNS`
             WHERE table_name = '{table_name}'
             ORDER BY ordinal_position;
@@ -217,10 +227,13 @@ class BigQueryVisualizer:
                     try:
                         fp.unlink()
                     except Exception as e:
-                        logger.warning("⚠️ Failed to delete %s: %s", fp, e)
+                        logger.warning("Failed to delete %s: %s", fp, e)
 
     def _build_where_clause(self, filter_str: str) -> str:
         """Helper to build a SQL WHERE clause from a filter string."""
+        # For safety, raw filter fragments are disabled when strict identifiers are on
+        if getattr(self, "strict_identifiers", False) and filter_str:
+            raise ValueError("Raw filter strings are disabled in strict mode. Set strict_identifiers=False to allow.")
         return f"WHERE {filter_str}" if filter_str else ""
 
     def _null_filter_for_dims(self, dims: list[str]) -> str:
@@ -238,6 +251,31 @@ class BigQueryVisualizer:
         if not base_where.strip():
             return f"WHERE {extra}"
         return f"{base_where} AND {extra}"
+
+    # ---------------- Identifier validation helpers -----------------
+    def _is_valid_identifier(self, name: str) -> bool:
+        import re
+        return isinstance(name, str) and re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name) is not None
+
+    def _validate_column(self, name: str) -> str:
+        if not self._is_valid_identifier(name) or name not in getattr(self, "columns", []):
+            raise ValueError(f"Invalid or unknown column identifier: {name}")
+        return name
+
+    def _validate_columns(self, names: list[str]) -> list[str]:
+        return [self._validate_column(n) for n in names]
+
+    def _validate_order_by(self, order_by: str | None) -> str | None:
+        if not order_by:
+            return None
+        parts = order_by.strip().split()
+        if len(parts) == 1:
+            col = self._validate_column(parts[0])
+            return col
+        if len(parts) == 2 and parts[1].upper() in {"ASC", "DESC"}:
+            col = self._validate_column(parts[0])
+            return f"{col} {parts[1].upper()}"
+        raise ValueError("order_by must be 'column' or 'column ASC|DESC'")
         
     def display_table(self, columns: list = None, order_by: str = None, limit: int = 25):
         """
@@ -251,15 +289,21 @@ class BigQueryVisualizer:
         Returns:
             pandas.io.formats.style.Styler: A styled DataFrame object for pretty printing.
         """
-        logger.info("📄 Fetching table data...")
+        if self.verbose:
+            logger.info("Fetching table data...")
+        # Validate inputs
+        if columns:
+            columns = self._validate_columns(columns)
         cols = "*" if not columns else ", ".join(columns)
-        order_clause = f"ORDER BY {order_by}" if order_by else ""
+        safe_order = self._validate_order_by(order_by)
+        order_clause = f"ORDER BY {safe_order}" if safe_order else ""
 
         limit = min(limit, 100)
 
         sample_clause = ""
         if self.table_rows:
-            pct = (100 / self.table_rows) * 100
+            pct = (limit / max(1, self.table_rows)) * 100.0
+            pct = max(0.01, min(100.0, pct))
             sample_clause = f"TABLESAMPLE SYSTEM ({pct:g} PERCENT)"
 
         query = f"""
@@ -308,8 +352,15 @@ class BigQueryVisualizer:
         """
         if not dimensions:
             raise ValueError("You must provide at least one dimension.")
+        # Validate identifiers
+        dimensions = self._validate_columns(dimensions)
+        metrics = metrics.copy()
+        for mcol in list(metrics.keys()):
+            if mcol != 'record_count':
+                self._validate_column(mcol)
         
-        logger.info("📊 Generating table chart...")
+        if self.verbose:
+            logger.info("Generating table chart...")
         
         # 1. Construct the SELECT clause
         select_parts = dimensions.copy()
@@ -323,6 +374,12 @@ class BigQueryVisualizer:
                 alias = f"{agg.lower()}_{metric}"
                 select_parts.append(f"{agg_upper}({metric}) AS {alias}")
         
+        # Validate inputs
+        dimensions = self._validate_columns(dimensions)
+        metrics = metrics.copy()
+        for mcol in list(metrics.keys()):
+            if mcol != 'record_count':
+                self._validate_column(mcol)
         base_where = self._build_where_clause(filter)
         select_clause = ",\n      ".join(select_parts)
         
@@ -330,7 +387,8 @@ class BigQueryVisualizer:
         group_by_clause = ", ".join([str(i+1) for i in range(len(dimensions))])
         
         # 3. Construct the ORDER BY clause
-        order_clause = f"ORDER BY {order_by}" if order_by else f"ORDER BY {len(select_parts)} DESC"
+        safe_order = self._validate_order_by(order_by) if order_by else None
+        order_clause = f"ORDER BY {safe_order}" if safe_order else f"ORDER BY {len(select_parts)} DESC"
         limit_clause = f"LIMIT {limit}" if limit else ""
 
         # 4. Assemble the final query
@@ -416,8 +474,13 @@ class BigQueryVisualizer:
         -------
         pandas.DataFrame, plotly.graph_objs.Figure
         """
-        logger.info("📊 Generating histogram…")
+        if self.verbose:
+            logger.info("Generating histogram…")
 
+        # Validate identifiers
+        self._validate_column(numeric_column)
+        if color_dimension:
+            self._validate_column(color_dimension)
         where_sql = self._build_where_clause(filter)
         if remove_nulls:
             nulls = [f"{numeric_column} IS NOT NULL"]
@@ -433,23 +496,33 @@ class BigQueryVisualizer:
                 {where_sql}
             ),
             edges AS (
-                SELECT APPROX_QUANTILES({numeric_column}, {bins + 1}) AS qs
-                FROM base
+                SELECT APPROX_QUANTILES({numeric_column}, {bins + 1}) AS qs FROM base
+            ),
+            bounds AS (
+                SELECT bucket_id,
+                       qs[OFFSET(bucket_id - 1)] AS bin_start,
+                       qs[OFFSET(bucket_id)]     AS bin_end
+                FROM edges, UNNEST(GENERATE_ARRAY(1, {bins})) AS bucket_id
             ),
             bucketed AS (
-                SELECT WIDTH_BUCKET({numeric_column}, qs) AS bucket
-                       {(',' + color_dimension) if color_dimension else ''}
-                FROM base, edges
+                SELECT
+                    b.{numeric_column} AS val,
+                    {('b.' + color_dimension + ',') if color_dimension else ''}
+                    bd.bucket_id AS bucket
+                FROM base b
+                JOIN bounds bd
+                  ON b.{numeric_column} >= bd.bin_start
+                 AND (b.{numeric_column} < bd.bin_end OR (bd.bucket_id = {bins} AND b.{numeric_column} <= bd.bin_end))
             )
             SELECT
-              bucket
-              {(',' + color_dimension) if color_dimension else ''},
-              qs[OFFSET(bucket - 1)] AS bin_start,
-              qs[OFFSET(bucket)] AS bin_end,
-              COUNT(*) AS n
-            FROM bucketed, edges
-            WHERE bucket BETWEEN 1 AND {bins}
-            GROUP BY bucket{(',' + color_dimension) if color_dimension else ''}
+                bucket
+                {(',' + color_dimension) if color_dimension else ''},
+                bd.bin_start,
+                bd.bin_end,
+                COUNT(*) AS n
+            FROM bucketed x
+            JOIN bounds bd USING(bucket)
+            GROUP BY bucket{(',' + color_dimension) if color_dimension else ''}, bd.bin_start, bd.bin_end
             ORDER BY bucket
         """
 
@@ -575,7 +648,7 @@ class BigQueryVisualizer:
                 else:
                     q = f"""
                         SELECT '{c1}' AS c1, '{c2}' AS c2,
-                               CORR(r1, r2) AS corr
+                                CORR(r1, r2) AS corr
                         FROM (
                             SELECT
                                 RANK() OVER(ORDER BY {c1}) AS r1,
@@ -661,7 +734,8 @@ class BigQueryVisualizer:
             The ``distfit`` summary table and fitted object.
         """
 
-        logger.info("🔍 Fitting distribution…")
+        if self.verbose:
+            logger.info("Fitting distribution...")
 
         where_sql = self._build_where_clause(filter)
         if remove_nulls:
@@ -743,7 +817,8 @@ class BigQueryVisualizer:
         if not dimensions or not metrics:
             raise ValueError("Provide at least one dimension and one metric.")
 
-        logger.info("📊 Generating categorical chart…")
+        if self.verbose:
+            logger.info("Generating categorical chart…")
 
         select_parts, metric_meta = [], {}
         for metric, agg in metrics.items():
@@ -842,8 +917,8 @@ class BigQueryVisualizer:
         final_where = merged_where if source_alias == self.full_table_path else ""
 
         first_metric = next(iter(metric_meta))
-        order_clause = (f"ORDER BY {order_by.strip() + (' DESC' if ' ' not in order_by else '')}"
-                        if order_by else f"ORDER BY {first_metric} DESC")
+        safe_order = self._validate_order_by(order_by) if order_by else None
+        order_clause = safe_order and f"ORDER BY {safe_order}" or f"ORDER BY {first_metric} DESC"
         group_by_clause = ", ".join(f"{bin_dim}_bin" if bin_dim and col == bin_dim else col
                                     for col in dimensions)
         limit_clause = f"LIMIT {limit}" if limit else ""
@@ -956,7 +1031,16 @@ class BigQueryVisualizer:
         -------
         pandas.DataFrame, plotly.graph_objs.Figure
         """
-        logger.info("📈 Generating Plotly scatter plot…")
+        # Validate identifiers before building SQL
+        self._validate_column(dimension)
+        self._validate_column(x_metric["column"]) if x_metric else None
+        self._validate_column(y_metric["column"]) if y_metric else None
+        if bubble_size_metric:
+            self._validate_column(bubble_size_metric["column"])
+        if color_dimension:
+            self._validate_column(color_dimension)
+        if self.verbose:
+            logger.info("Generating Plotly scatter plot…")
 
         # ───────────────────── helper to build metric parts ─────────
         def build_metric(m):
@@ -1059,11 +1143,14 @@ class BigQueryVisualizer:
             dimensions (list): An ordered list of categorical columns for the hierarchy.
             filter (str, optional): An SQL filter condition.
         """
-        logger.info(
-            "☀️ Generating sunburst chart for hierarchy: %s",
-            " -> ".join(dimensions),
-        )
+        if self.verbose:
+            logger.info(
+                "Generating sunburst chart for hierarchy: %s",
+                " -> ".join(dimensions),
+            )
         where_clause = self._build_where_clause(filter)
+        # Validate identifiers
+        dimensions = self._validate_columns(dimensions)
         dims_str = ", ".join(dimensions)
         
         query = f"""
@@ -1132,9 +1219,18 @@ class BigQueryVisualizer:
         -------
         pandas.DataFrame, matplotlib.axes.Axes
         """
-        logger.info("📊 Generating boxen plot…")
+        if self.verbose:
+            logger.info("Generating boxen plot…")
 
         # ---------- 1. build query -----------------------------------
+        # Validate identifiers
+        self._validate_column(numeric_column)
+        if category_dimension:
+            self._validate_column(category_dimension)
+        # Validate identifiers
+        self._validate_column(numeric_column)
+        if category_dimension:
+            self._validate_column(category_dimension)
         select_cols = [numeric_column]
         if category_dimension:
             select_cols.insert(0, category_dimension)
@@ -1241,7 +1337,8 @@ class BigQueryVisualizer:
         -------
         pandas.DataFrame, matplotlib.axes.Axes
         """
-        logger.info("🎻 Generating violin plot…")
+        if self.verbose:
+            logger.info("Generating violin plot…")
 
         # ---------- 1. build query -----------------------------------
         select_cols = [numeric_column]
@@ -1408,7 +1505,8 @@ class BigQueryVisualizer:
         Returns:
             pd.DataFrame: A DataFrame containing the descriptive statistics.
         """
-        logger.info("🔍 Analyzing numeric column: %s", numeric_column)
+        if self.verbose:
+            logger.info("Analyzing numeric column: %s", numeric_column)
         where_clause = self._build_where_clause(filter)
         query = f"""
             SELECT
@@ -1466,7 +1564,8 @@ class BigQueryVisualizer:
         Returns:
             pd.DataFrame: A DataFrame containing the descriptive statistics.
         """
-        logger.info("🔍 Analyzing categorical column: %s", categorical_column)
+        if self.verbose:
+            logger.info("Analyzing categorical column: %s", categorical_column)
         where_clause = self._build_where_clause(filter)
         query = f"""
             WITH base AS (
@@ -1519,7 +1618,8 @@ class BigQueryVisualizer:
         """
         Runs descriptive analysis for all numeric columns and returns a single summary DataFrame.
         """
-        logger.info("🤖 Starting automated analysis for all numeric columns...")
+        if self.verbose:
+            logger.info("Starting automated analysis for all numeric columns...")
         
         all_results = []
         numeric_columns = [col for col in numeric_columns if col in self.numeric_columns] if numeric_columns else self.numeric_columns
@@ -1533,8 +1633,10 @@ class BigQueryVisualizer:
             logger.warning("No numeric data to analyze.")
             return pd.DataFrame()
             
-        # Convert list of dicts to a DataFrame
-        summary_df = pd.DataFrame(all_results).set_index('column_name')
+        # Convert list of dicts to a DataFrame and normalize schema
+        summary_df = pd.DataFrame(all_results)
+        if 'column_name' in summary_df.columns:
+            summary_df = summary_df.rename(columns={'column_name': 'column'})
         
         # Define a nice column order
         col_order = [
@@ -1544,30 +1646,21 @@ class BigQueryVisualizer:
         ]
         summary_df = summary_df[col_order]
 
-        logger.info("✅ Analysis complete.")
-        # Return a styled DataFrame for pretty printing in notebooks
-        return summary_df.style.format({
-            'Null Count': '{:,.2f}',
-            'Null %': '{:.2f}%',
-            'Mean': '{:,.2f}',
-            'Std Dev': '{:,.2f}',
-            'Variance': '{:,.2f}',
-            'Skewness': '{:,.2f}',
-            'Kurtosis': '{:,.2f}',
-            'Min': '{:,.2f}',
-            '25% (Q1)': '{:,.2f}',
-            '50% (Median)': '{:,.2f}',
-            '75% (Q3)': '{:,.2f}',
-            'Max': '{:,.2f}',
-            'IQR': '{:,.2f}'
-        }).background_gradient(cmap='viridis', subset=['Null %'])
+        if self.verbose:
+            logger.info("Analysis complete.")
+        try:
+            setattr(summary_df, 'data', summary_df)
+        except Exception:
+            pass
+        return summary_df
 
     def analyze_all_categorical(self, top_n_values: int = 5, categorical_columns: list = None, filter: str | None = None):
         """
         Runs analysis for all categorical columns and returns a single summary DataFrame
         with top-N values expanded into separate columns as percentages.
         """
-        logger.info("🤖 Starting automated analysis for all categorical columns...")
+        if self.verbose:
+            logger.info("Starting automated analysis for all categorical columns...")
 
         all_results = []
         categorical_columns = [col for col in categorical_columns if col in self.categorical_columns] if categorical_columns else self.categorical_columns
@@ -1610,14 +1703,17 @@ class BigQueryVisualizer:
             logger.warning("No categorical data to analyze.")
             return pd.DataFrame()
         
-        summary_df = pd.DataFrame(all_results).set_index('column_name')
+        summary_df = pd.DataFrame(all_results)
+        if 'column_name' in summary_df.columns:
+            summary_df = summary_df.rename(columns={'column_name': 'column'})
         
-        logger.info("✅ Analysis complete.")
-        return summary_df.style.format({
-            'Null %': '{:.4f}%',
-            'Mode Freq.': '{:,.2f}%',
-            'Other %': '{:,.4f}%'
-        }).background_gradient(cmap='Reds', subset=['Null %'])
+        if self.verbose:
+            logger.info("Analysis complete.")
+        try:
+            setattr(summary_df, 'data', summary_df)
+        except Exception:
+            pass
+        return summary_df
 
     # ------------------------------------------------------------------
     # Sampling & bias evaluation utilities
@@ -1800,7 +1896,7 @@ class BigQueryVisualizer:
                 lf = pl.scan_parquet(fname)
                 self.__class__._lazy_sample_cache[hash_key] = lf
             except Exception as e:
-                logger.warning("⚠️ Could not cache sample to %s: %s", fname, e)
+                logger.warning("Could not cache sample to %s: %s", fname, e)
             return lf
         return pl.DataFrame([]).lazy()
 
@@ -2007,13 +2103,26 @@ class BigQueryVisualizer:
 
         col_sql = ", ".join(columns)
         not_null = " AND ".join(f"{c} IS NOT NULL" for c in columns)
+        # Build correct options per algorithm
+        if algo == "pca":
+            options = "STRUCT(2 AS num_principal_components)"
+            dim1, dim2 = "principal_component_1", "principal_component_2"
+        elif algo == "tsne":
+            # t-SNE uses generic output columns dim1/dim2
+            # Options: num_dimensions, perplexity, learning_rate, etc.
+            options = "STRUCT(2 AS num_dimensions)"
+            dim1, dim2 = "dim1", "dim2"
+        else:  # umap
+            options = "STRUCT(2 AS num_components)"
+            dim1, dim2 = "dim1", "dim2"
+
         query = f"""
             SELECT
-              principal_component_1 AS dim1,
-              principal_component_2 AS dim2
+              {dim1} AS dim1,
+              {dim2} AS dim2
             FROM {tvf}(
               (SELECT {col_sql} FROM {self.full_table_path} WHERE {not_null}),
-              STRUCT(2 AS num_principal_components)
+              {options}
             )
         """
 
